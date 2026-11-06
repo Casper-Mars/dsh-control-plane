@@ -122,11 +122,11 @@ export class Upstream {
       }).remote
       upstream.mounted = await remote.$mount(session.default)
       // interactions=none 时没有事件通道；轮询 diff 负责状态变化（见 index.ts）
-      const handle = (root as unknown as { connection?: { interactions: 'none' | 'answer' } }).connection
-      if (handle?.interactions === 'answer') {
-        upstream.stopStatus = remote.$on('api-session/status', ((sessionId: unknown, running: unknown) => {
+      const handle = (root as unknown as { connection: { interactions: 'none' | 'answer' } }).connection
+      if (handle.interactions === 'answer') {
+        upstream.stopStatus = remote.$on('api-session/status', (sessionId: unknown, running: unknown) => {
           upstream.publishStatus(String(sessionId), running === true)
-        }) as (...args: never[]) => void)
+        })
       }
       upstream.state = 'connected'
       return upstream
@@ -197,10 +197,10 @@ export class Upstream {
       const value = unwrap(await remote.session.list({}, signal))
       this.state = 'connected'
       this.lastError = undefined
-      return (value.items ?? []).map(row => ({
+      return value.items.map(row => ({
         sessionId: String(row.sessionId),
         cwd: row.cwd,
-        updatedAt: Number(row.updatedAt ?? 0),
+        updatedAt: Number(row.updatedAt),
         running: row.running === true,
         agentAvailable: row.agentAvailable === true ? true : row.agentAvailable === false ? false : undefined,
       }))
@@ -250,7 +250,7 @@ type RemoteResult<T> = { readonly ok: true; readonly value: T } | RemoteFailure
  */
 function unwrap<T>(result: RemoteResult<T>): T {
   if (result.ok) return result.value
-  const detail = result.error?.message ?? result.error?.code ?? 'unknown'
+  const detail = result.error.message ?? result.error.code ?? 'unknown'
   throw new Error(`Remote 调用失败: ${detail}`)
 }
 

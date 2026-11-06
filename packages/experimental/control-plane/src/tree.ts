@@ -10,58 +10,12 @@
  */
 
 import type { ResolvedInstance } from './config.ts'
+import type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './types.ts'
+
+export type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './types.ts'
 
 /** Separator between the instance id and the instance-local value. */
 const SEPARATOR = ':'
-
-/** Session facts the sidebar needs; a projection of `SessionSummary`. */
-export interface SessionRow {
-  /** Instance-local session id, exactly as the instance reported it. */
-  readonly sessionId: string
-  /** Instance-local working directory when the instance reports one. */
-  readonly cwd?: string | undefined
-  /** Last update time, epoch milliseconds. */
-  readonly updatedAt: number
-  /** Whether an agent turn is currently running. */
-  readonly running: boolean
-  /** Whether this session currently owns a live agent. */
-  readonly agentAvailable?: boolean | undefined
-}
-
-/** One session row in the composed tree. */
-export interface SessionNode extends SessionRow {
-  /** Federated key: `<instanceId>:<sessionId>`. */
-  readonly key: string
-  /** Instance that owns this session. */
-  readonly instanceId: string
-}
-
-/** One workspace group inside an instance. */
-export interface WorkspaceNode {
-  /** Federated path: `<instanceId>:<cwd>`; `undefined` sessions use the instance placeholder. */
-  readonly key: string
-  /** Path shown to the user, without the instance prefix. */
-  readonly path: string
-  /** Sessions, newest activity first. */
-  readonly sessions: readonly SessionNode[]
-  /** Sessions with a running turn in this workspace. */
-  readonly runningCount: number
-  /** Newest `updatedAt` in this workspace, 0 when empty. */
-  readonly latestUpdatedAt: number
-}
-
-/** One instance group in the sidebar. */
-export interface InstanceNode {
-  readonly instanceId: string
-  /** `name(id)`, the title the sidebar renders. */
-  readonly label: string
-  /** Workspaces, ordered by path. */
-  readonly workspaces: readonly WorkspaceNode[]
-  /** Sessions with a running turn in this instance. */
-  readonly runningCount: number
-  /** Total sessions in this instance. */
-  readonly sessionCount: number
-}
 
 /** Placeholder path for sessions an instance reports without `cwd`. */
 export const NO_WORKSPACE = '(no workspace)'

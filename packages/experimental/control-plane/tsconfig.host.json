@@ -9,12 +9,21 @@
     "src/index.ts",
     "src/config.ts",
     "src/tree.ts",
-    "src/upstream.ts"
+    "src/upstream.ts",
+    "src/types.ts"
   ],
   "references": [
-    { "path": "../../../vendor/cordis" },
-    { "path": "../../../vendor/schemastery" },
-    { "path": "../../typert/protocol" },
-    { "path": "../../typert/registry" }
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../typert/registry"
+    }
   ]
 }

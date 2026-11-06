@@ -46,7 +46,7 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
  * @throws if an id is missing, malformed or duplicated, or a host/port is unusable.
  */
 export function resolveInstances(config: Config): ResolvedInstance[] {
-  const raw = config.instances ?? []
+  const raw = config.instances
   if (raw.length === 0) throw new Error('control-plane: 至少需要一个实例（instances 为空）')
 
   const seen = new Set<string>()

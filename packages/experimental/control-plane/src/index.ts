@@ -12,17 +12,20 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
-import { buildTree, qualify, split, type InstanceNode, type SessionRow } from './tree.ts'
-import { Upstream, type UpstreamState, type UpstreamTransport } from './upstream.ts'
+import { buildTree, qualify, split } from './tree.ts'
+import type {
+  InstanceInfo, InstanceNode, RouteRequest, RouteValue, SessionChange, SessionRow, UpstreamState,
+} from './types.ts'
+import { Upstream, type UpstreamTransport } from './upstream.ts'
 
 export type { InstanceConfig, ResolvedInstance, Config as ControlPlaneConfig } from './config.ts'
-export type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './tree.ts'
-
-/** Kinds of session change the sidebar reacts to. */
-export type SessionChange = 'added' | 'updated' | 'removed'
-export { Upstream, type UpstreamState } from './upstream.ts'
+export type {
+  InstanceInfo, InstanceNode, RouteRequest, RouteValue, SessionChange, SessionNode, SessionRow, UpstreamState, WorkspaceNode,
+} from './types.ts'
+export { Upstream } from './upstream.ts'
 export { buildTree, qualify, split, NO_WORKSPACE } from './tree.ts'
 export { resolveInstances } from './config.ts'
 
@@ -50,7 +53,7 @@ declare module '@deepseek-ai/cordis' {
  * connection layer arrives it will add per-instance reachability here without
  * changing the shape the sidebar consumes.
  */
-export class ControlPlane {
+export class ControlPlane extends TypertRemoteService {
   /** Instances in configuration order. */
   readonly instances: readonly ResolvedInstance[]
 
@@ -79,8 +82,50 @@ export class ControlPlane {
    * @param _ctx - owning plugin context (unused until outbound connections land).
    * @param config - validated plugin configuration.
    */
-  constructor(_ctx: Context, config: RawConfig) {
+  static readonly inject = ['typert']
+
+  constructor(ctx: Context, config: RawConfig) {
+    super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
+  }
+
+  /**
+   * Instance roster with reachability, for the sidebar group headers.
+   * @returns configured instances in sidebar order.
+   */
+  @Remote('instances')
+  instanceList(): InstanceInfo[] {
+    const states = this.states()
+    return this.instances.map((instance) => {
+      const current = states[instance.id]
+      return {
+        id: instance.id,
+        name: instance.name,
+        label: `${instance.name}(${instance.id})`,
+        state: current?.state ?? 'unreachable',
+        ...(current?.error === undefined ? {} : { error: current.error }),
+      }
+    })
+  }
+
+  /**
+   * Current instance → workspace → session tree.
+   * @returns the composed tree; unreachable instances contribute empty groups.
+   */
+  @Remote('tree')
+  async treeSnapshot(): Promise<InstanceNode[]> {
+    return await this.snapshot()
+  }
+
+  /**
+   * Resolve a federated session key to its owning instance.
+   * @param request - the qualified key.
+   * @returns instance id and instance-local session id.
+   */
+  @Remote('route')
+  routeKey(request: RouteRequest): RouteValue {
+    const { instance, sessionId } = this.route(request.key)
+    return { instanceId: instance.id, sessionId }
   }
 
   /**
@@ -95,7 +140,7 @@ export class ControlPlane {
       try {
         const upstream = await Upstream.connect(instance, transportFor?.(instance))
         this.upstreams.set(instance.id, upstream)
-        upstream.onSessionStatus((sessionId, running) => this.publishStatus(instance.id, sessionId, running))
+        upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
         // A mounted connection is not a reachable one: probe once so the
         // sidebar can mark an instance unreachable before its first refresh.
         await upstream.listSessions()
@@ -115,7 +160,7 @@ export class ControlPlane {
    */
   onSessionChange(listener: (key: string, kind: SessionChange) => void): () => void {
     this.changeListeners.add(listener)
-    return () => this.changeListeners.delete(listener)
+    return () => { this.changeListeners.delete(listener) }
   }
 
   /**
@@ -125,10 +170,10 @@ export class ControlPlane {
    * @param intervalMs - refresh interval in milliseconds.
    * @returns disposer.
    */
-  startPolling(intervalMs = 2000): () => void {
+  startPolling(intervalMs: number = 2000): () => void {
     this.stopPolling()
     this.timer = setInterval(() => { void this.snapshot() }, intervalMs)
-    return () => this.stopPolling()
+    return () => { this.stopPolling() }
   }
 
   /** Stop periodic refreshes. */

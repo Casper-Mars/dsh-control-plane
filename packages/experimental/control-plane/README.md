@@ -18,7 +18,21 @@
 
 | `src/index.ts`（3.3） | `onSessionStatus` / `onSessionChange`、`startPolling()`（默认 2s，diff 上一轮）、事件里 qualified key |
 
-未实现（下一步）：`instances` Remote 命名空间（给浏览器）；WS 事件流（见已知限制）。
+### 3.4 前置：Remote 命名空间（已完成）
+
+控制面类改为 `TypertRemoteService`，暴露三个方法（生成物：`lib/typert.host.js`、`lib/typert.remote-client.js`）：
+
+| 方法 | 返回 |
+|---|---|
+| `controlPlane/instances` | `InstanceInfo[]`（id、name、label=`name(id)`、state、error） |
+| `controlPlane/tree` | `InstanceNode[]`（实例 → 工作区 → 会话，含 runningCount） |
+| `controlPlane/route` | `{ key }` → `{ instanceId, sessionId }` |
+
+- 边界类型集中在 `src/types.ts`，通过 `./types` 子路径导出（Typert 的硬性要求）
+- 生成命令：`node --import tsx/esm scripts/generate-typert.ts`（build:artifacts 里也会跑）
+- 生成的描述符：`methods: controlPlane/instances, controlPlane/route, controlPlane/tree`
+
+未实现（下一步）：浏览器侧消费（`ctx.remote.controlPlane.tree()`）+ 侧边栏三级分组；WS 事件流见已知限制。
 
 ### 3.3 验证结果（轮询 diff）
 
