@@ -54,3 +54,6 @@ native/system/test/bin/
 
 # 本地验证用的隔离 DSH_HOME
 .devhome/
+
+# 控制面本地配置
+control-plane/control-plane.json

@@ -1,0 +1,8 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8099 },
+  "instances": [
+    { "id": "cto", "name": "CTO Agent", "host": "127.0.0.1", "port": 8090 },
+    { "id": "pm",  "name": "PM Agent",  "host": "127.0.0.1", "port": 8093 },
+    { "id": "dev", "name": "Dev Agent", "host": "127.0.0.1", "port": 8091 }
+  ]
+}
