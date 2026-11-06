@@ -39,6 +39,9 @@ importers:
       '@deepseek-ai/dsh-computer-use':
         specifier: workspace:*
         version: link:packages/computer-use/computer-use
+      '@deepseek-ai/dsh-control-plane':
+        specifier: workspace:*
+        version: link:packages/control/control-plane
       '@deepseek-ai/dsh-cua':
         specifier: workspace:*
         version: link:packages/experimental/cua

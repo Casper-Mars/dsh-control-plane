@@ -88,21 +88,16 @@ export class ControlPlane extends TypertRemoteService {
   constructor(ctx: Context, config: RawConfig) {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
+    console.log('[control-plane] 插件已激活，实例数:', this.instances.length)
+    // 调试：确认描述符是否已被 typert-loader 注册
+    const typert = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
+    const mine = typert?.listPackages?.().filter(entry => entry.package === '@deepseek-ai/dsh-control-plane') ?? []
+    console.log(`[control-plane] typert 描述符: ${JSON.stringify(mine)}`)
     // 插件激活即开始连接各实例；卸载时关闭全部出站连接
     ctx.effect(() => {
       void this.connect()
       return async () => { await this.dispose() }
     }, 'control-plane.instances')
-    // 自注册 Typert 描述符：patch 插入的条目不一定被 typert-loader 发现
-    void (async () => {
-      try {
-        const { TYPERT } = await import('@deepseek-ai/dsh-control-plane/typert') as { TYPERT: unknown }
-        const registry = ctx.get('typert') as { register: (contribution: unknown) => () => void } | undefined
-        if (registry !== undefined) registry.register(TYPERT)
-      } catch (error) {
-        console.error('[control-plane] typert 注册失败:', error instanceof Error ? error.message : String(error))
-      }
-    })()
   }
 
   /**
