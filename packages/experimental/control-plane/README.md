@@ -2,18 +2,33 @@
 
 控制面的核心数据模型：**一个 Web UI 管多个 Harness 实例**，侧边栏三级 `实例 → 工作区 → 会话`。
 
-## 当前进度（里程碑 2 第一步）
+## 当前进度（3.2 出站连接）
 
-已实现（无真实连接，纯数据层）：
+已实现：
 
 | 文件 | 内容 |
 |---|---|
 | `src/config.ts` | 实例配置校验与派生：`id` 唯一且格式受限、`host`/`port` 必填、`name` 缺省取 `id`、派生 `baseUrl` |
 | `src/tree.ts` | 联邦键编码（`<instanceId>:<值>`）、解包、三级树组装（实例按配置顺序、工作区按路径、会话按更新时间倒序）、组内 running 统计 |
 | `src/index.ts` | Cordis 插件：`controlPlane.instances` / `.tree()` / `.route(key)` |
-| `scripts/demo-tree.ts` | 假数据演示，打印三级结构并验证路由 |
+| `src/upstream.ts` | 每实例一条出站连接（独立 Cordis 子 root + client connection + 只挂 `session` 命名空间），`listSessions()` / `createSession()` / 状态与错误 |
+| `src/index.ts` | `controlPlane.connect()`（连全部 + 探活）、`.snapshot()`（并发拉取并组树）、`.states()`、`.dispose()` |
+| `scripts/demo-tree.ts` | 假数据演示三级结构 |
+| `scripts/demo-two.ts` | 两个真实实例 → 三元树 + 连通状态 |
 
-未实现（下一步）：出站连接（每实例一条 client connection）、`instances` Remote 命名空间、事件流订阅。
+未实现（下一步）：`instances` Remote 命名空间（给浏览器）、事件流订阅（session running/完成）。
+
+### 3.2 验证结果
+
+```
+实例: a=connected, b=connected      # 停掉 b 后 → a=connected, b=unreachable
+✓ A Agent(a)  [5 会话, 0 进行中]
+    /tmp
+      ○ a:session-b3560842-…       # 同一实例的会话都带 a: 前缀
+✗ B Agent(b)  [0 会话, 0 进行中]  (Remote 调用失败: session/list failed: fetch failed)
+```
+
+一个实例挂掉不会影响另一个：连接、探测、组树都是每实例独立的一次调用。
 
 ## 为什么需要实例前缀
 

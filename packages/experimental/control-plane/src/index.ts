@@ -15,9 +15,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
 import { buildTree, split, type InstanceNode, type SessionRow } from './tree.ts'
+import { Upstream, type UpstreamState, type UpstreamTransport } from './upstream.ts'
 
 export type { InstanceConfig, ResolvedInstance, Config as ControlPlaneConfig } from './config.ts'
 export type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './tree.ts'
+export { Upstream, type UpstreamState } from './upstream.ts'
 export { buildTree, qualify, split, NO_WORKSPACE } from './tree.ts'
 export { resolveInstances } from './config.ts'
 
@@ -49,12 +51,84 @@ export class ControlPlane {
   /** Instances in configuration order. */
   readonly instances: readonly ResolvedInstance[]
 
+  /** Per-instance reachability reported alongside the tree. */
+  private readonly upstreams = new Map<string, Upstream>()
+
+  /** Failures recorded by the last connect pass, keyed by instance id. */
+  private readonly connectErrors = new Map<string, string>()
+
   /**
    * @param _ctx - owning plugin context (unused until outbound connections land).
    * @param config - validated plugin configuration.
    */
   constructor(_ctx: Context, config: RawConfig) {
     this.instances = resolveInstances(config)
+  }
+
+  /**
+   * Open one connection per configured instance. Failures are recorded per
+   * instance and never reject the pass: one unreachable agent must not hide
+   * the others.
+   * @returns the instance ids that connected.
+   */
+  async connect(transportFor?: (instance: ResolvedInstance) => UpstreamTransport): Promise<string[]> {
+    const connected: string[] = []
+    await Promise.all(this.instances.map(async (instance) => {
+      try {
+        const upstream = await Upstream.connect(instance, transportFor?.(instance))
+        this.upstreams.set(instance.id, upstream)
+        // A mounted connection is not a reachable one: probe once so the
+        // sidebar can mark an instance unreachable before its first refresh.
+        await upstream.listSessions()
+        this.connectErrors.delete(instance.id)
+        connected.push(instance.id)
+      } catch (error) {
+        this.connectErrors.set(instance.id, error instanceof Error ? error.message : String(error))
+      }
+    }))
+    return connected
+  }
+
+  /**
+   * Reachability per instance, for the sidebar group headers.
+   * @returns state plus the last error when unreachable.
+   */
+  states(): Record<string, { state: UpstreamState; error?: string }> {
+    const result: Record<string, { state: UpstreamState; error?: string }> = {}
+    for (const instance of this.instances) {
+      const upstream = this.upstreams.get(instance.id)
+      const error = upstream?.error ?? this.connectErrors.get(instance.id)
+      result[instance.id] = {
+        state: upstream?.reachability ?? 'unreachable',
+        ...(error === undefined ? {} : { error }),
+      }
+    }
+    return result
+  }
+
+  /**
+   * Read every instance and compose the sidebar tree. An instance that fails
+   * here contributes no sessions and flips to `unreachable` on its own.
+   * @returns the instance → workspace → session tree.
+   */
+  async snapshot(): Promise<InstanceNode[]> {
+    const rows = new Map<string, readonly SessionRow[]>()
+    await Promise.all(this.instances.map(async (instance) => {
+      const upstream = this.upstreams.get(instance.id)
+      if (upstream === undefined) return
+      try {
+        rows.set(instance.id, await upstream.listSessions())
+      } catch {
+        rows.set(instance.id, [])
+      }
+    }))
+    return buildTree(this.instances, rows)
+  }
+
+  /** Close every outbound connection. */
+  async dispose(): Promise<void> {
+    await Promise.all([...this.upstreams.values()].map(upstream => upstream.dispose()))
+    this.upstreams.clear()
   }
 
   /**

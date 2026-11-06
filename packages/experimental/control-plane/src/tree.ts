@@ -19,13 +19,13 @@ export interface SessionRow {
   /** Instance-local session id, exactly as the instance reported it. */
   readonly sessionId: string
   /** Instance-local working directory when the instance reports one. */
-  readonly cwd?: string
+  readonly cwd?: string | undefined
   /** Last update time, epoch milliseconds. */
   readonly updatedAt: number
   /** Whether an agent turn is currently running. */
   readonly running: boolean
   /** Whether this session currently owns a live agent. */
-  readonly agentAvailable?: boolean
+  readonly agentAvailable?: boolean | undefined
 }
 
 /** One session row in the composed tree. */
