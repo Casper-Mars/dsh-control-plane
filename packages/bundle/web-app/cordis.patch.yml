@@ -58,11 +58,6 @@
     - id: subagent-model-selection-settings
       name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
 
-    - id: message-feedback
-      name: '@deepseek-ai/dsh-message-feedback'
-      config:
-        maxNoteBytes: 8192
-
     # Browser Session export: `/export` command plus the shared download dialog.
     - id: session-log-download
       name: '@deepseek-ai/dsh-session-log-export'
@@ -70,20 +65,11 @@
     # Session-menu application choices over Host resolution on macOS, Windows,
     # and Linux. An empty catalog hides the action. The Host routes and browser
     # controls also serve the file-tree directory opener.
-    - id: open-in-app
-      name: '@deepseek-ai/dsh-host-open-in-app'
-      config:
-        probeTimeoutMs: 10000
-        iconTimeoutMs: 10000
-        launchWatchMs: 1000
 
     - id: ui-file-actions
       name: '@deepseek-ai/dsh-client-ui-file-actions'
     - id: ui-context-menu
       name: '@deepseek-ai/dsh-client-ui-context-menu'
-    - id: ui-open-in-app
-      name: '@deepseek-ai/dsh-client-ui-open-in-app'
-
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
 
@@ -106,9 +92,6 @@
     # Resolve bind host, SSH launch, and display once at boot, then mount the
     # matching dual-face directory picker. Mount -native or -browse directly in
     # an overlay to pin the interaction.
-    - id: directory-picker
-      name: '@deepseek-ai/dsh-host-directory-picker-auto'
-
     # Read-only projection of current Loader entries for trusted client RPCs.
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
@@ -137,9 +120,6 @@
 
     # Configuration-surface reads and writes over Typert Remote. Each method
     # reports an actionable error when its settings-domain provider is absent.
-    - id: ui-settings-account
-      name: '@deepseek-ai/dsh-client-ui-settings-account'
-
     - id: account-controller
       name: '@deepseek-ai/dsh-api-account-controller'
 
@@ -287,7 +267,6 @@
     - id: ui-sidebar-right
       name: '@deepseek-ai/dsh-client-ui-sidebar-right'
 
-
     - id: office-to-pdf
       name: '@deepseek-ai/dsh-office-to-pdf'
 
@@ -313,20 +292,6 @@
     - id: ui-settings-general
       name: '@deepseek-ai/dsh-client-ui-settings-general'
 
-    - id: ui-settings-models
-      name: '@deepseek-ai/dsh-client-ui-settings-models'
-
-    # Plugin management: the sidebar Plugins page installs, enables, disables,
-    # and removes the profile's bundles through the `pluginManager` Remote.
-    # Without a profile-backed Host it reports itself unavailable.
-    - id: ui-plugin-manager
-      name: '@deepseek-ai/dsh-client-ui-plugin-manager'
-
-    # Read-only Plugin list tab in the Settings Plugins section; the built-in
-    # bundles the sidebar page leaves out are inspected here.
-    - id: ui-settings-plugin-inventory
-      name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
-
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'
 
@@ -340,9 +305,6 @@
       name: '@deepseek-ai/dsh-client-ui-chat'
 
     # Official occupants for the sidebar brand slots and the home whale frame layer.
-    - id: ui-brand-official
-      name: '@deepseek-ai/dsh-client-ui-brand-official'
-
     - id: ui-attachment
       name: '@deepseek-ai/dsh-client-ui-attachment'
 
@@ -369,7 +331,6 @@
     # snapshots; the changed-files card above renders its events.
     - id: workspace-changes
       name: '@deepseek-ai/dsh-workspace-changes'
-
 
     - id: ui-workspace
       name: '@deepseek-ai/dsh-client-ui-workspace'
@@ -409,20 +370,10 @@
     - id: ui-jobs
       name: '@deepseek-ai/dsh-client-ui-jobs'
 
-    # Task management and Session reminder catalog over the Host Schedule
-    # service mounted above.
-    - id: ui-schedule
-      name: '@deepseek-ai/dsh-client-ui-schedule'
 
     # Goal surface: GoalBar in the input dock over the goal session projection.
     - id: ui-goal
       name: '@deepseek-ai/dsh-client-ui-goal'
-
-    # The feedback surface: Like/Dislike in the assistant-message action
-    # strip, the feedback dialog behind Dislike and /feedback with its
-    # acknowledgement toast, over the messageFeedback and sessionFeedback Remotes.
-    - id: ui-message-feedback
-      name: '@deepseek-ai/dsh-client-ui-message-feedback'
 
     # Model selection: the /model popupSelect + composer seat over session.models.
     - id: ui-model-selection
@@ -431,40 +382,12 @@
     - id: ui-permission
       name: '@deepseek-ai/dsh-client-ui-permission-presets'
 
-    # The agent-preset row in General settings: the default preset for
-    # sessions created later. Absent a roster it renders nothing.
-    - id: ui-agent-preset
-      name: '@deepseek-ai/dsh-client-ui-agent-preset'
-
-    # Region-local More menus: pin or unpin plugin launchers and start a
-    # plugin draft.
-    - id: entry-customization
-      name: '@deepseek-ai/dsh-client-ui-entry-customization'
-
-    - id: ui-settings-session-log
-      name: '@deepseek-ai/dsh-client-ui-settings-session-log'
-
     # The Built-in plugins settings section: the navigation entry and the tab
     # row the inventory tab registers into. The official configuration pages
     # are the companion rows below.
-    - id: ui-settings-plugins
-      name: '@deepseek-ai/dsh-client-ui-settings-plugins'
-
     # The official settings pages: one companion package per host-plane
     # namespace, each registering its page into the Plugins page while the
     # Host serves the namespace.
-    - id: ui-settings-shell
-      name: '@deepseek-ai/dsh-client-ui-settings-shell'
-
-    - id: ui-settings-agent-loop
-      name: '@deepseek-ai/dsh-client-ui-settings-agent-loop'
-
-    - id: ui-settings-subagent
-      name: '@deepseek-ai/dsh-client-ui-settings-subagent'
-
-    - id: ui-settings-web-search
-      name: '@deepseek-ai/dsh-client-ui-settings-web-search'
-
     # Plan control: the composer plan seat over the plan projection + /plan channel.
     - id: ui-plan
       name: '@deepseek-ai/dsh-client-ui-plan'
