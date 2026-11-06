@@ -55,6 +55,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * which is a size container one viewport tall and a scroll-state container,
      * and binds its own vertical scroller through `useSectionScroller`.
      */
+    /** Control-plane instance groups rendered above the workspace browser. */
+    'sidebar.instances': { kind: 'single'; scope: 'root'; owner: Record<never, never> }
+
     'sidebar.workspaces': {
       kind: 'single'
       scope: 'root'
@@ -238,5 +241,6 @@ export type SidebarRootComponentProps =
     | 'sidebar.workspaces'
     | 'sidebar.settings'
     | 'sidebar.footer.action'
+    | 'sidebar.instances'
   >
   & PropsRenderFactories & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>

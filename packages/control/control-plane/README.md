@@ -67,10 +67,10 @@ running 状态变化走同一条 diff 路径（`old.running !== value.running` �
 
 ```bash
 # 打印三级树（假数据：两个实例都出现 session-1 与 /workspace）
-pnpm exec tsx packages/experimental/control-plane/scripts/demo-tree.ts
+pnpm exec tsx packages/control/control-plane/scripts/demo-tree.ts
 
 # 类型检查
-pnpm exec tsc -b packages/experimental/control-plane/tsconfig.host.json
+pnpm exec tsc -b packages/control/control-plane/tsconfig.host.json
 ```
 
 输出示例：

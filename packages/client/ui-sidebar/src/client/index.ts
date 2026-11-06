@@ -14,6 +14,7 @@ import type { SidebarPanelMetadata, SidebarRootInjected, SidebarSectionInjected 
 import { createPanelPins } from './panel-pins.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
+import { instanceGroupsSlot, type InstanceGroupView } from './InstanceGroups.tsx'
 import { PanelIcon } from './PanelIcon.tsx'
 import { en, ja, es, fr, de, ru, pt, zh, type SidebarKey } from './locales.ts'
 
@@ -101,10 +102,21 @@ export function apply(ctx: ClientContext): void {
         'sidebar.workspaces': { kind: 'single', scope: 'root', inject: SIDEBAR_SECTION_INJECT },
         'sidebar.settings': { kind: 'single', scope: 'root' },
         'sidebar.footer.action': { kind: 'list', scope: 'root' },
+        'sidebar.instances': { kind: 'single', scope: 'root' },
       },
       inject: injectProps,
     }, SidebarRoot)
   })
+  // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在。
+  const controlPlane = (ctx.remote as unknown as {
+    controlPlane?: { tree: () => Promise<readonly InstanceGroupView[]> }
+  }).controlPlane
+  if (controlPlane !== undefined) {
+    ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
+      name: 'sidebar.instances',
+      locale: NS,
+    }, instanceGroupsSlot(() => controlPlane.tree())))
+  }
   // macOS desktop hides the collapsed sidebar entirely, so the open/New
   // Session controls move into the frame's window-chrome seat beside the
   // traffic lights; the occupant reuses the shell's injected actions, and
