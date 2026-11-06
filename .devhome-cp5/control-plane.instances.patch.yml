@@ -1,4 +1,0 @@
-- id: control-plane
-  config:
-    instances:
-          - { id: nolock, name: 'No-Lock', host: 127.0.0.1, port: 8084 }
