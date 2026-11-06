@@ -88,6 +88,11 @@ try {
     console.log('instances 失败:', JSON.stringify(infos.error))
   }
 
+  const routed = await (remote as unknown as {
+    route: (request: { key: string }) => Promise<Result<{ instanceId: string }>>
+  }).route({ key: 'nolock:main' })
+  console.log('route:', routed.ok ? JSON.stringify(routed.value) : JSON.stringify(routed.error))
+
   const tree = await remote.tree()
   if (!tree.ok) throw new Error(`controlPlane/tree 失败: ${JSON.stringify(tree.error)}`)
   for (const node of tree.value ?? []) {
