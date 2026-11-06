@@ -14,11 +14,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
-import { buildTree, split, type InstanceNode, type SessionRow } from './tree.ts'
+import { buildTree, qualify, split, type InstanceNode, type SessionRow } from './tree.ts'
 import { Upstream, type UpstreamState, type UpstreamTransport } from './upstream.ts'
 
 export type { InstanceConfig, ResolvedInstance, Config as ControlPlaneConfig } from './config.ts'
 export type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './tree.ts'
+
+/** Kinds of session change the sidebar reacts to. */
+export type SessionChange = 'added' | 'updated' | 'removed'
 export { Upstream, type UpstreamState } from './upstream.ts'
 export { buildTree, qualify, split, NO_WORKSPACE } from './tree.ts'
 export { resolveInstances } from './config.ts'
@@ -57,6 +60,21 @@ export class ControlPlane {
   /** Failures recorded by the last connect pass, keyed by instance id. */
   private readonly connectErrors = new Map<string, string>()
 
+  /** Session running state per instance, fed by forwarded events. */
+  private readonly running = new Map<string, Map<string, boolean>>()
+
+  /** Listeners for qualified status changes, consumed by the Remote stream. */
+  private readonly statusListeners = new Set<(key: string, running: boolean) => void>()
+
+  /** Listeners for session add/update/remove, consumed by the Remote stream. */
+  private readonly changeListeners = new Set<(key: string, kind: SessionChange) => void>()
+
+  /** Last composed view per instance, used to diff refresh passes. */
+  private readonly previous = new Map<string, Map<string, { updatedAt: number; running: boolean }>>()
+
+  /** Polling timer; undefined when refresh is driven manually. */
+  private timer: ReturnType<typeof setInterval> | undefined
+
   /**
    * @param _ctx - owning plugin context (unused until outbound connections land).
    * @param config - validated plugin configuration.
@@ -77,6 +95,7 @@ export class ControlPlane {
       try {
         const upstream = await Upstream.connect(instance, transportFor?.(instance))
         this.upstreams.set(instance.id, upstream)
+        upstream.onSessionStatus((sessionId, running) => this.publishStatus(instance.id, sessionId, running))
         // A mounted connection is not a reachable one: probe once so the
         // sidebar can mark an instance unreachable before its first refresh.
         await upstream.listSessions()
@@ -87,6 +106,63 @@ export class ControlPlane {
       }
     }))
     return connected
+  }
+
+  /**
+   * Subscribe to session add/update/remove changes.
+   * @param listener - receives `<instanceId>:<sessionId>` and the change kind.
+   * @returns disposer.
+   */
+  onSessionChange(listener: (key: string, kind: SessionChange) => void): () => void {
+    this.changeListeners.add(listener)
+    return () => this.changeListeners.delete(listener)
+  }
+
+  /**
+   * Start periodic refreshes; each pass diffs against the previous one and
+   * emits changes. Polling stands in for the forwarded-event stream until the
+   * Node carrier supports it (see README known limitations).
+   * @param intervalMs - refresh interval in milliseconds.
+   * @returns disposer.
+   */
+  startPolling(intervalMs = 2000): () => void {
+    this.stopPolling()
+    this.timer = setInterval(() => { void this.snapshot() }, intervalMs)
+    return () => this.stopPolling()
+  }
+
+  /** Stop periodic refreshes. */
+  stopPolling(): void {
+    if (this.timer !== undefined) clearInterval(this.timer)
+    this.timer = undefined
+  }
+
+  /**
+   * Subscribe to qualified running-state changes.
+   * @param listener - receives `<instanceId>:<sessionId>` and its state.
+   * @returns disposer.
+   */
+  onSessionStatus(listener: (key: string, running: boolean) => void): () => void {
+    this.statusListeners.add(listener)
+    return () => this.statusListeners.delete(listener)
+  }
+
+  /** Remember one instance's status change and forward it qualified. */
+  private publishStatus(instanceId: string, sessionId: string, running: boolean): void {
+    let bySession = this.running.get(instanceId)
+    if (bySession === undefined) {
+      bySession = new Map()
+      this.running.set(instanceId, bySession)
+    }
+    bySession.set(sessionId, running)
+    const key = qualify(instanceId, sessionId)
+    for (const listener of [...this.statusListeners]) {
+      try {
+        listener(key, running)
+      } catch (error) {
+        console.error('[control-plane] 状态监听器抛错:', error)
+      }
+    }
   }
 
   /**
@@ -117,7 +193,13 @@ export class ControlPlane {
       const upstream = this.upstreams.get(instance.id)
       if (upstream === undefined) return
       try {
-        rows.set(instance.id, await upstream.listSessions())
+        const listed = await upstream.listSessions()
+        this.diff(instance.id, listed)
+        // 事件可能比列表更新：用事件里已知的状态覆盖列表里的旧值
+        const live = this.running.get(instance.id)
+        rows.set(instance.id, live === undefined
+          ? listed
+          : listed.map(row => live.has(row.sessionId) ? { ...row, running: live.get(row.sessionId) === true } : row))
       } catch {
         rows.set(instance.id, [])
       }
@@ -125,8 +207,53 @@ export class ControlPlane {
     return buildTree(this.instances, rows)
   }
 
+  /** Compare one instance's fresh list with the previous pass and emit changes. */
+  private diff(instanceId: string, rows: readonly SessionRow[]): void {
+    const next = new Map<string, { updatedAt: number; running: boolean }>()
+    for (const row of rows) next.set(row.sessionId, { updatedAt: row.updatedAt, running: row.running })
+    const before = this.previous.get(instanceId)
+
+    if (before !== undefined) {
+      for (const [sessionId, value] of next) {
+        const old = before.get(sessionId)
+        if (old === undefined) this.emitChange(instanceId, sessionId, 'added')
+        else if (old.running !== value.running) this.publishStatus(instanceId, sessionId, value.running)
+        else if (old.updatedAt !== value.updatedAt) this.emitChange(instanceId, sessionId, 'updated')
+      }
+      for (const sessionId of before.keys()) {
+        if (!next.has(sessionId)) this.emitChange(instanceId, sessionId, 'removed')
+      }
+    }
+    this.previous.set(instanceId, next)
+  }
+
+  /** Publish one session change, qualified. */
+  private emitChange(instanceId: string, sessionId: string, kind: SessionChange): void {
+    const key = qualify(instanceId, sessionId)
+    for (const listener of [...this.changeListeners]) {
+      try {
+        listener(key, kind)
+      } catch (error) {
+        console.error('[control-plane] 变更监听器抛错:', error)
+      }
+    }
+  }
+
+  /**
+   * Create a session on one instance (verification helper).
+   * @param instanceId - configured instance id.
+   * @param cwd - working directory the new session owns.
+   * @returns the qualified session key.
+   */
+  async createSession(instanceId: string, cwd: string): Promise<string> {
+    const upstream = this.upstreams.get(instanceId)
+    if (upstream === undefined) throw new Error(`control-plane: 实例 ${instanceId} 未连接`)
+    return qualify(instanceId, await upstream.createSession(cwd))
+  }
+
   /** Close every outbound connection. */
   async dispose(): Promise<void> {
+    this.stopPolling()
     await Promise.all([...this.upstreams.values()].map(upstream => upstream.dispose()))
     this.upstreams.clear()
   }

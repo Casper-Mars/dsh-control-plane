@@ -13,6 +13,7 @@
  * models no credentials.
  */
 import { readFileSync } from 'node:fs'
+import WebSocket from 'ws'
 import { ControlPlane, resolveInstances } from '../src/index.ts'
 import type { ResolvedInstance } from '../src/index.ts'
 
@@ -61,7 +62,18 @@ await control.connect((instance) => {
   }
 })
 
-const tree = await control.snapshot()
+control.onSessionStatus((key, running) => console.log(`  状态事件: ${key} running=${running}`))
+control.onSessionChange((key, kind) => console.log(`  变更事件: ${key} ${kind}`))
+
+let tree = await control.snapshot()
+console.log('首次刷新完成（已建立基线）')
+
+const created = await control.createSession('a', '/tmp')
+console.log(`在 a 上新建会话: ${created}`)
+
+await new Promise(resolve => setTimeout(resolve, 300))
+tree = await control.snapshot()
+console.log('第二次刷新完成（应看到 added 事件）')
 const states = control.states()
 console.log(`实例: ${Object.entries(states).map(([id, value]) => `${id}=${value.state}`).join(', ')}`)
 for (const node of tree) {

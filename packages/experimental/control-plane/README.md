@@ -16,7 +16,20 @@
 | `scripts/demo-tree.ts` | 假数据演示三级结构 |
 | `scripts/demo-two.ts` | 两个真实实例 → 三元树 + 连通状态 |
 
-未实现（下一步）：`instances` Remote 命名空间（给浏览器）、事件流订阅（session running/完成）。
+| `src/index.ts`（3.3） | `onSessionStatus` / `onSessionChange`、`startPolling()`（默认 2s，diff 上一轮）、事件里 qualified key |
+
+未实现（下一步）：`instances` Remote 命名空间（给浏览器）；WS 事件流（见已知限制）。
+
+### 3.3 验证结果（轮询 diff）
+
+```
+首次刷新完成（已建立基线）
+在 a 上新建会话: a:session-aa10a893-…
+  变更事件: a:session-aa10a893-… added      ← 下一轮 diff 立刻发现
+第二次刷新完成
+```
+
+running 状态变化走同一条 diff 路径（`old.running !== value.running` → `onSessionStatus`）。
 
 ### 3.2 验证结果
 
@@ -64,6 +77,14 @@ Dev Agent(dev)  [0 会话, 0 进行中]
 
 路由: cto:session-1 → instance=cto, sessionId=session-1
 ```
+
+## 已知限制
+
+1. **WS 事件通道未接通**：`interactions: 'answer'` 时网关的 mux 载体没有走到注入的
+   `createWebSocket`（Node 侧 `lib/client.node.js` 里 `connection.openWebSocket` 未被调用，
+   表现为 `[connection] connection lost, retry #N`）。当前用 2s 轮询 diff 替代，
+   running/updatedAt 变化能在 ≤2s 内被发现；接通后改回推送，接口不变。
+2. 轮询对实例数量线性增加请求量（每实例每 2s 一次 `session/list`），实例多时需要退避或事件化。
 
 ## 配置形态（将来挂进 profile）
 

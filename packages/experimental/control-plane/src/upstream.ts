@@ -26,6 +26,8 @@ interface ConnectionClientModule {
     interactions?: 'none' | 'answer'
     transport?: {
       fetch?: (input: string | URL, init?: RequestInit) => Promise<Response>
+      streamBaseUrl?: string
+      createWebSocket?: (url: string) => unknown
       openStream?: (...args: never[]) => unknown
     }
   }) => void
@@ -59,6 +61,8 @@ export type UpstreamState = 'connecting' | 'connected' | 'unreachable'
 export interface UpstreamTransport {
   /** Resolves the channel-relative RPC route against this instance. */
   readonly fetch?: (input: string | URL, init?: RequestInit) => Promise<Response>
+  /** WebSocket factory, when the carrier needs headers the global client cannot send. */
+  readonly webSocket?: (url: string) => unknown
 }
 
 /** One instance's client connection and the facts the sidebar reads. */
@@ -66,6 +70,9 @@ export class Upstream {
   readonly instance: ResolvedInstance
   private readonly root: Context
   private mounted: (() => Promise<void>) | undefined
+  private stopStatus: (() => void) | undefined
+  private readonly statusListeners = new Set<(sessionId: string, running: boolean) => void>()
+  private readonly running = new Map<string, boolean>()
   private lastError: string | undefined
   private state: UpstreamState = 'connecting'
 
@@ -91,15 +98,14 @@ export class Upstream {
         load<RemoteContributionModule>('@deepseek-ai/dsh-api-session-controller/remote'),
       ])
       connection.installConnection(root, {
-        // A non-page Client takes part in no forwarded human interaction.
+        // 控制面不参与人工审批/提问，也不依赖转发事件通道：
+        // Node 侧 mux 载体目前无法注入带凭据的 WebSocket，状态用轮询 diff 取得。
         interactions: 'none',
         transport: {
           fetch: transport.fetch ?? ((input, init) => fetch(new URL(String(input), instance.baseUrl), init)),
-          // Streams (session events) arrive with milestone 3.3; a unary-only
-          // connection never calls this.
-          openStream: () => {
-            throw new Error(`control-plane: ${instance.id} 的流通道尚未实现（3.3）`)
-          },
+          // 事件通道暂未启用；保留 seams 供后续切换到 WS 推送
+          streamBaseUrl: `${instance.baseUrl}/`,
+          createWebSocket: transport.webSocket ?? ((url: string) => new WebSocket(url)),
         },
       })
       // Cordis 的重载要求 config 参数，这里按运行时契约直接调用
@@ -109,9 +115,19 @@ export class Upstream {
       await mount(registry.default)
       await mount({ apply: gateway.apply, inject: gateway.inject })
       const remote = (root as unknown as {
-        remote: { $mount: (contribution: unknown) => Promise<() => Promise<void>> }
+        remote: {
+          $mount: (contribution: unknown) => Promise<() => Promise<void>>
+          $on: (event: string, listener: (...args: never[]) => void) => () => void
+        }
       }).remote
       upstream.mounted = await remote.$mount(session.default)
+      // interactions=none 时没有事件通道；轮询 diff 负责状态变化（见 index.ts）
+      const handle = (root as unknown as { connection?: { interactions: 'none' | 'answer' } }).connection
+      if (handle?.interactions === 'answer') {
+        upstream.stopStatus = remote.$on('api-session/status', ((sessionId: unknown, running: unknown) => {
+          upstream.publishStatus(String(sessionId), running === true)
+        }) as (...args: never[]) => void)
+      }
       upstream.state = 'connected'
       return upstream
     } catch (error) {
@@ -120,9 +136,44 @@ export class Upstream {
     }
   }
 
+  /**
+   * Subscribe to this instance's session running-state changes.
+   * @param listener - receives the instance-local session id and its state.
+   * @returns disposer.
+   */
+  onSessionStatus(listener: (sessionId: string, running: boolean) => void): () => void {
+    this.statusListeners.add(listener)
+    return () => this.statusListeners.delete(listener)
+  }
+
+  /** Session-local running state learned from events since connect. */
+  get runningState(): ReadonlyMap<string, boolean> {
+    return this.running
+  }
+
+  /** Push one status event to every listener, remembering the latest state. */
+  private publishStatus(sessionId: string, running: boolean): void {
+    this.running.set(sessionId, running)
+    for (const listener of [...this.statusListeners]) {
+      try {
+        listener(sessionId, running)
+      } catch (error) {
+        console.error(`[control-plane] ${this.instance.id} 状态监听器抛错:`, error)
+      }
+    }
+  }
+
   /** Current reachability, updated by every read. */
   get reachability(): UpstreamState {
     return this.state
+  }
+
+  /** Whether the forwarded-event stream generation is established. */
+  get streamReady(): boolean {
+    const connection = (this.root as unknown as {
+      connection?: { generation: { getSnapshot: () => unknown } }
+    }).connection
+    return connection?.generation.getSnapshot() !== undefined
   }
 
   /** Last failure message, when the instance is unreachable. */
@@ -176,6 +227,8 @@ export class Upstream {
   /** Close the connection and dispose the subtree. */
   async dispose(): Promise<void> {
     try {
+      this.stopStatus?.()
+      this.stopStatus = undefined
       await this.mounted?.()
     } finally {
       await this.root.fiber.dispose()
