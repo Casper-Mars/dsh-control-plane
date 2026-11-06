@@ -63,6 +63,8 @@ export interface UpstreamTransport {
   readonly fetch?: (input: string | URL, init?: RequestInit) => Promise<Response>
   /** WebSocket factory, when the carrier needs headers the global client cannot send. */
   readonly webSocket?: (url: string) => unknown
+  /** Join the forwarded-event lifecycle (needs an auth-free Host or a cookie carrier). */
+  readonly events?: boolean
 }
 
 /** One instance's client connection and the facts the sidebar reads. */
@@ -90,6 +92,8 @@ export class Upstream {
   static async connect(instance: ResolvedInstance, transport: UpstreamTransport = {}): Promise<Upstream> {
     const root = new Context()
     const upstream = new Upstream(instance, root)
+    // 实例仍要求 launch token 时先换一张 index cookie；免 token 后这段自然失效
+    const cookie = transport.fetch === undefined ? await exchangeToken(instance) : undefined
     try {
       const [connection, gateway, registry, session] = await Promise.all([
         load<ConnectionClientModule>('@deepseek-ai/dsh-client-connection/client'),
@@ -98,11 +102,15 @@ export class Upstream {
         load<RemoteContributionModule>('@deepseek-ai/dsh-api-session-controller/remote'),
       ])
       connection.installConnection(root, {
-        // 控制面不参与人工审批/提问，也不依赖转发事件通道：
-        // Node 侧 mux 载体目前无法注入带凭据的 WebSocket，状态用轮询 diff 取得。
-        interactions: 'none',
+        // 控制面不参与人工审批/提问；events 开启时才加入转发事件的生命周期
+        // （免 token 的 Host 可以直接用全局 WebSocket）。
+        interactions: transport.events === true ? 'answer' : 'none',
         transport: {
-          fetch: transport.fetch ?? ((input, init) => fetch(new URL(String(input), instance.baseUrl), init)),
+          fetch: transport.fetch ?? ((input, init) => {
+            const headers = new Headers(init?.headers)
+            if (cookie !== undefined) headers.set('cookie', cookie)
+            return fetch(new URL(String(input), instance.baseUrl), { ...init, headers })
+          }),
           // 事件通道暂未启用；保留 seams 供后续切换到 WS 推送
           streamBaseUrl: `${instance.baseUrl}/`,
           createWebSocket: transport.webSocket ?? ((url: string) => new WebSocket(url)),
@@ -134,6 +142,18 @@ export class Upstream {
       await root.fiber.dispose()
       throw new Error(`control-plane: 实例 ${instance.id} 连接失败: ${message(error)}`)
     }
+  }
+
+  /**
+   * Mount one more Remote namespace on this connection.
+   * @param contribution - generated Remote descriptor.
+   * @returns disposer.
+   */
+  async mountRemote(contribution: unknown): Promise<() => Promise<void>> {
+    const remote = (this.root as unknown as {
+      remote: { $mount: (value: unknown) => Promise<() => Promise<void>> }
+    }).remote
+    return await remote.$mount(contribution)
   }
 
   /**
@@ -234,6 +254,23 @@ export class Upstream {
       await this.root.fiber.dispose()
     }
   }
+}
+
+/**
+ * Exchange an instance's launch token for the signed index cookie every RPC
+ * uses. Skipped when the instance declares no token.
+ * @param instance - instance facts including the optional token.
+ * @returns the `name=value` cookie pair, or undefined when there is no token.
+ * @throws when the exchange fails; the caller reports the instance unreachable.
+ */
+async function exchangeToken(instance: ResolvedInstance): Promise<string | undefined> {
+  if (instance.token === undefined) return undefined
+  const token = encodeURIComponent(instance.token)
+  const response = await fetch(`${instance.baseUrl}/?token=${token}`, { redirect: 'manual' })
+  const pairs = response.headers.getSetCookie().map(entry => entry.split(';', 1)[0]).filter(Boolean)
+  if (response.body !== null) await response.body.cancel()
+  if (pairs.length === 0) throw new Error(`control-plane: ${instance.id} 拒绝 launch token`)
+  return pairs.join('; ')
 }
 
 /** Rejection half of a Remote result envelope. */

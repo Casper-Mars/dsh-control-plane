@@ -36,6 +36,7 @@ export const Config: z<RawConfig> = z.object({
     name: z.string(),
     host: z.string().required(),
     port: z.natural().required(),
+    token: z.string(),
   })).required(),
 })
 
@@ -87,6 +88,21 @@ export class ControlPlane extends TypertRemoteService {
   constructor(ctx: Context, config: RawConfig) {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
+    // 插件激活即开始连接各实例；卸载时关闭全部出站连接
+    ctx.effect(() => {
+      void this.connect()
+      return async () => { await this.dispose() }
+    }, 'control-plane.instances')
+    // 自注册 Typert 描述符：patch 插入的条目不一定被 typert-loader 发现
+    void (async () => {
+      try {
+        const { TYPERT } = await import('@deepseek-ai/dsh-control-plane/typert') as { TYPERT: unknown }
+        const registry = ctx.get('typert') as { register: (contribution: unknown) => () => void } | undefined
+        if (registry !== undefined) registry.register(TYPERT)
+      } catch (error) {
+        console.error('[control-plane] typert 注册失败:', error instanceof Error ? error.message : String(error))
+      }
+    })()
   }
 
   /**
@@ -124,7 +140,7 @@ export class ControlPlane extends TypertRemoteService {
    */
   @Remote('route')
   routeKey(request: RouteRequest): RouteValue {
-    const { instance, sessionId } = this.route(request.key)
+    const { instance, sessionId } = this.resolveKey(request.key)
     return { instanceId: instance.id, sessionId }
   }
 
@@ -138,7 +154,9 @@ export class ControlPlane extends TypertRemoteService {
     const connected: string[] = []
     await Promise.all(this.instances.map(async (instance) => {
       try {
-        const upstream = await Upstream.connect(instance, transportFor?.(instance))
+        // 默认加入转发事件（免 token 的 Host 可直接用全局 WebSocket）；
+        // 仍要求凭据的实例由调用方通过 transportFor 关掉 events。
+        const upstream = await Upstream.connect(instance, { events: true, ...transportFor?.(instance) })
         this.upstreams.set(instance.id, upstream)
         upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
         // A mounted connection is not a reachable one: probe once so the
@@ -147,7 +165,9 @@ export class ControlPlane extends TypertRemoteService {
         this.connectErrors.delete(instance.id)
         connected.push(instance.id)
       } catch (error) {
-        this.connectErrors.set(instance.id, error instanceof Error ? error.message : String(error))
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[control-plane] 实例 ${instance.id} 连接失败: ${message}`)
+        this.connectErrors.set(instance.id, message)
       }
     }))
     return connected
@@ -304,21 +324,12 @@ export class ControlPlane extends TypertRemoteService {
   }
 
   /**
-   * Compose the sidebar tree from already-collected session rows.
-   * @param sessionsByInstance - rows keyed by instance id; unknown ids are ignored.
-   * @returns the instance → workspace → session tree.
-   */
-  tree(sessionsByInstance: ReadonlyMap<string, readonly SessionRow[]>): InstanceNode[] {
-    return buildTree(this.instances, sessionsByInstance)
-  }
-
-  /**
    * Route a federated session key back to its instance.
    * @param key - `<instanceId>:<sessionId>`.
    * @returns the owning instance and the instance-local session id.
    * @throws if the key is malformed or names an unconfigured instance.
    */
-  route(key: string): { instance: ResolvedInstance; sessionId: string } {
+  private resolveKey(key: string): { instance: ResolvedInstance; sessionId: string } {
     const { instanceId, value } = split(key)
     const instance = this.instances.find(candidate => candidate.id === instanceId)
     if (instance === undefined) throw new Error(`control-plane: 未知实例 ${JSON.stringify(instanceId)}`)

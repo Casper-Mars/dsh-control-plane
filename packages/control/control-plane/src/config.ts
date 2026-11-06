@@ -18,6 +18,12 @@ export interface InstanceConfig {
   host: string
   /** Harness web port on that host. */
   port: number
+  /**
+   * Launch token of the instance, when that Harness still requires one.
+   * Temporary: the control plane models no credentials once `dsh web` runs
+   * without a token.
+   */
+  token?: string
 }
 
 /** Validated instance with its derived fields. */
@@ -28,6 +34,8 @@ export interface ResolvedInstance {
   readonly port: number
   /** Origin used for both HTTP and WebSocket targeting. */
   readonly baseUrl: string
+  /** Launch token, present only while the instance still requires one. */
+  readonly token?: string
 }
 
 /** Control-plane plugin configuration. */
@@ -74,6 +82,7 @@ export function resolveInstances(config: Config): ResolvedInstance[] {
       host,
       port,
       baseUrl: `http://${host}:${port}`,
+      ...(instance.token === undefined || instance.token.length === 0 ? {} : { token: instance.token }),
     }
   })
 }
