@@ -89,11 +89,6 @@ export class ControlPlane extends TypertRemoteService {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
     console.log('[control-plane] 插件已激活，实例数:', this.instances.length)
-    setTimeout(() => {
-      const registry = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
-      const mine = registry?.listPackages?.().filter(entry => entry.package === '@deepseek-ai/dsh-control-plane') ?? []
-      console.log('[control-plane] 3s 后描述符:', JSON.stringify(mine))
-    }, 3000).unref?.()
     // 调试：确认描述符是否已被 typert-loader 注册
     const typert = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
     const mine = typert?.listPackages?.().filter(entry => entry.package === '@deepseek-ai/dsh-control-plane') ?? []

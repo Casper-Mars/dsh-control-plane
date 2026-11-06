@@ -1,7 +1,6 @@
-# Mounts the control plane inside the web runtime tree: a root-level service is
-# not visible to the gateway that lives under `web-runtime`.
-- id: web-runtime
-  insert:
+# Mounts the control plane service. Instance list is supplied by the profile's
+# own cordis.patch.yml (config is replaced wholesale, not deep-merged).
+- insert:
     - id: control-plane
       name: '@deepseek-ai/dsh-control-plane'
       config:

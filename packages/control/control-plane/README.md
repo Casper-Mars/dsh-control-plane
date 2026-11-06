@@ -92,64 +92,53 @@ Dev Agent(dev)  [0 会话, 0 进行中]
 路由: cto:session-1 → instance=cto, sessionId=session-1
 ```
 
-## 如何挂载（必须走 bundle）
+## 如何挂载（bundle，官方方式）
 
-**patch 的 `insert` 不能直接挂载普通插件**：入口虽然出现在配置里，但启动诊断显示为
-`include:<id>` 且从不构造。实测结论：patch insert 面向 bundle，普通插件要由一个
-bundle 的 `cordis.patch.yml` 插入。
+**patch 的 `insert` 不能直接挂普通插件**：条目会出现在配置里、启动诊断显示 `state: active`，
+但构造器从不执行（表现为 `include:<id>`）。普通插件必须由一个 bundle 的
+`cordis.patch.yml` 插入——这也是 dsh 自己所有插件的形态。
 
-因此本仓库提供 `packages/control/control-plane-bundle`（只有 package.json + patch）：
+本仓库的 bundle：`packages/control/control-plane-bundle`（只有 `package.json` +
+`cordis.patch.yml`），它插入 `control-plane` 插件行。
 
-```yaml
-# control-plane-bundle/cordis.patch.yml
-- insert:
-    - id: control-plane
-      name: '@deepseek-ai/dsh-control-plane'
-      config:
-        instances: []
+### 一条命令
+
+```bash
+cp control-plane/control-plane.example.json control-plane/control-plane.json   # 填 instances
+make control-plane          # 默认 3095，PORT=3100 可改
 ```
 
-挂载步骤（开发态）：
+脚本做的事（`scripts/control-plane-dev.sh`）：
 
-1. profile 的 `package.json` 里加依赖与本 bundle：
-   ```json
-   "dependencies": { "@deepseek-ai/dsh-control-plane-bundle": "link:../../../../../packages/control/control-plane-bundle" },
-   "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@deepseek-ai/dsh-control-plane-bundle"] } }
-   ```
-2. 用 patch 覆盖实例清单（config 整体替换，非深合并）：
-   ```yaml
-   - id: control-plane
-     config:
-       instances: [{ id: nolock, name: 'No-Lock', host: 127.0.0.1, port: 8084 }]
-   ```
-3. `pnpm dsh --profile web --patch <file>`
+1. `dsh plugin add link:<bundle>` —— 官方挂载：写 profile 依赖 + 追加到 `dsh.profile.bundles`
+2. 把 `instances` 生成为 `--patch` 叠加层（不改 profile 的 `cordis.patch.yml`）
+3. 起 `dsh web`
 
 ### 构建顺序（重要）
 
-宿主产物由 **tsc 先编译到 lib/types，再由 tsdown 打包**：
+宿主产物是 **tsc 编译到 lib/types → tsdown 打包**：
 
 ```bash
 pnpm exec tsc -b packages/control/control-plane/tsconfig.host.json
 pnpm --filter @deepseek-ai/dsh-control-plane exec tsdown --config-loader native
 ```
 
-只跑 tsdown 会打包**旧的** lib/types —— 改源码后不生效，且没有任何报错。
+只跑 tsdown 会打包**旧的** lib/types：改源码不生效、且完全没有报错。
 
-### 3.5 验证结果
+### 验证结果（干净 profile + 免 token 实例）
 
 ```
 [control-plane] 插件已激活，实例数: 1
 No-Lock(nolock): connected
+route: {"instanceId":"nolock","sessionId":"main"}
 No-Lock(nolock)  [6 会话, 0 进行中]
     /tmp
-      ○ nolock:session-913c75d3-…
+      ○ nolock:session-…
     /Users/reachlucifer/agents/dsh-worker/test/workspace
       ○ nolock:main
-      ○ nolock:session-50264eb7-…
 ```
 
-`controlPlane/instances` 与 `controlPlane/tree` 均经真实 Host 调用成功；侧边栏消费同一
-命名空间（`ui-sidebar` 的 `sidebar.instances` 槽位）。
+`controlPlane/instances`、`/route`、`/tree` 均经真实 Host 调用成功；侧边栏消费同一命名空间。
 
 ## 已知限制
 

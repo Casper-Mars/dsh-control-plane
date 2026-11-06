@@ -1,0 +1,13 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@deepseek-ai/dsh-control-plane-bundle':
+        specifier: link:/Users/reachlucifer/project/opc/dsh-web-control/packages/control/control-plane-bundle
+        version: link:../../../packages/control/control-plane-bundle
