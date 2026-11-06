@@ -1,0 +1,17 @@
+{
+  "name": "@deepseek-ai/dsh-control-plane-bundle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Profile bundle that mounts the control plane plugin",
+  "license": "MIT",
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": ["./cordis.patch.yml"]
+    }
+  },
+  "files": ["cordis.patch.yml", "package.json"],
+  "dependencies": {
+    "@deepseek-ai/dsh-control-plane": "workspace:*"
+  }
+}

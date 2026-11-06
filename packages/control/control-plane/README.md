@@ -92,6 +92,65 @@ Dev Agent(dev)  [0 会话, 0 进行中]
 路由: cto:session-1 → instance=cto, sessionId=session-1
 ```
 
+## 如何挂载（必须走 bundle）
+
+**patch 的 `insert` 不能直接挂载普通插件**：入口虽然出现在配置里，但启动诊断显示为
+`include:<id>` 且从不构造。实测结论：patch insert 面向 bundle，普通插件要由一个
+bundle 的 `cordis.patch.yml` 插入。
+
+因此本仓库提供 `packages/control/control-plane-bundle`（只有 package.json + patch）：
+
+```yaml
+# control-plane-bundle/cordis.patch.yml
+- insert:
+    - id: control-plane
+      name: '@deepseek-ai/dsh-control-plane'
+      config:
+        instances: []
+```
+
+挂载步骤（开发态）：
+
+1. profile 的 `package.json` 里加依赖与本 bundle：
+   ```json
+   "dependencies": { "@deepseek-ai/dsh-control-plane-bundle": "link:../../../../../packages/control/control-plane-bundle" },
+   "dsh": { "profile": { "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "@deepseek-ai/dsh-control-plane-bundle"] } }
+   ```
+2. 用 patch 覆盖实例清单（config 整体替换，非深合并）：
+   ```yaml
+   - id: control-plane
+     config:
+       instances: [{ id: nolock, name: 'No-Lock', host: 127.0.0.1, port: 8084 }]
+   ```
+3. `pnpm dsh --profile web --patch <file>`
+
+### 构建顺序（重要）
+
+宿主产物由 **tsc 先编译到 lib/types，再由 tsdown 打包**：
+
+```bash
+pnpm exec tsc -b packages/control/control-plane/tsconfig.host.json
+pnpm --filter @deepseek-ai/dsh-control-plane exec tsdown --config-loader native
+```
+
+只跑 tsdown 会打包**旧的** lib/types —— 改源码后不生效，且没有任何报错。
+
+### 3.5 验证结果
+
+```
+[control-plane] 插件已激活，实例数: 1
+No-Lock(nolock): connected
+No-Lock(nolock)  [6 会话, 0 进行中]
+    /tmp
+      ○ nolock:session-913c75d3-…
+    /Users/reachlucifer/agents/dsh-worker/test/workspace
+      ○ nolock:main
+      ○ nolock:session-50264eb7-…
+```
+
+`controlPlane/instances` 与 `controlPlane/tree` 均经真实 Host 调用成功；侧边栏消费同一
+命名空间（`ui-sidebar` 的 `sidebar.instances` 槽位）。
+
 ## 已知限制
 
 1. **WS 事件通道未接通**：`interactions: 'answer'` 时网关的 mux 载体没有走到注入的

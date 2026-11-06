@@ -1,0 +1,7 @@
+# Mounts the control plane service. Instance list is supplied by the profile's
+# own cordis.patch.yml (config is replaced wholesale, not deep-merged).
+- insert:
+    - id: control-plane
+      name: '@deepseek-ai/dsh-control-plane'
+      config:
+        instances: []
