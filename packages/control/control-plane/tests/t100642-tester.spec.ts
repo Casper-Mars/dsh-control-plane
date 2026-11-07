@@ -524,6 +524,44 @@ describe('t100642-tester / ControlPlane.events 运行时语义', () => {
     await control.dispose()
   })
 
+  it('订阅之后 control.connect() 的拨号失败同样推 states（真实启动路径，不靠轮询）', async () => {
+    vi.useFakeTimers()
+    const state: FakeState = {
+      rows: [row('s-1')],
+      reachability: 'connected',
+      error: undefined,
+      failWith: undefined,
+      disposed: false,
+    }
+    let failDial = false
+    const { control, connections } = bench(async () => {
+      if (failDial) throw new Error('alpha refused')
+      return fakeUpstream(state)
+    })
+    await connections.connect()
+
+    const controller = new AbortController()
+    const iterator = control.events(controller.signal)[Symbol.asyncIterator]()
+    const first = await nextFrame(iterator)
+    expect(first.kind).toBe('tree')
+
+    // 首帧基线已发过，再让一次真实拨号失败：客户端不需要 snapshot 或 30s 轮询就能看到掉线。
+    failDial = true
+    await control.connect()
+    expect(await nextFrame(iterator)).toEqual({
+      kind: 'states',
+      states: [{ instanceId: 'alpha', state: 'unreachable', error: 'alpha refused' }],
+    })
+    const tree = await nextFrame(iterator)
+    expect(tree.kind).toBe('tree')
+    if (tree.kind !== 'tree') throw new Error('unreachable')
+    expect(tree.tree[0]?.state).toBe('unreachable')
+    expect(tree.tree[0]?.sessionCount).toBe(0)
+
+    controller.abort()
+    await control.dispose()
+  })
+
   it('states 帧只在可达性真的变化时出现（稳定状态不刷帧）', async () => {
     vi.useFakeTimers()
     const state: FakeState = {
