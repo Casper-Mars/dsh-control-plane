@@ -425,7 +425,7 @@ export function SidebarRoot({
             </nav>
           )}
           <div className={css.regionArea}>
-            {renderSlot('sidebar.instances', {})}
+            {renderSlot('sidebar.instances', { wide })}
             {!controlPlane && renderSlot('sidebar.workspaces', {
               wide,
               expandSidebar: () => { if (collapsed) toggleSidebar() },

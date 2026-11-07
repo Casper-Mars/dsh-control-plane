@@ -12,6 +12,19 @@ export const zh = {
   'navigation.label': '导航',
   'panels.more': '更多',
   'version.copied': '版本号复制成功',
+  // 控制面实例分组（只有组合了 control-plane 的 Client 会用到）。
+  'instances.group': '{name}，{state}，{n} 个会话',
+  'instances.state.connected': '已连接',
+  'instances.state.connecting': '连接中',
+  'instances.state.unreachable': '不可达',
+  'instances.expand': '展开其余 {n} 个会话',
+  'instances.collapse': '收起',
+  'time.now': '刚刚',
+  'time.minutes': '{n}分钟',
+  'time.hours': '{n}小时',
+  'time.days': '{n}天',
+  'time.months': '{n}个月',
+  'time.years': '{n}年',
 } satisfies Record<string, string>
 
 /** The sidebar namespace key union. */
@@ -29,6 +42,18 @@ export const en = {
   'navigation.label': 'Navigation',
   'panels.more': 'More',
   'version.copied': 'Version copied',
+  'instances.group': '{name}, {state}, {n} sessions',
+  'instances.state.connected': 'Connected',
+  'instances.state.connecting': 'Connecting',
+  'instances.state.unreachable': 'Unreachable',
+  'instances.expand': 'Show {n} more sessions',
+  'instances.collapse': 'Show less',
+  'time.now': 'now',
+  'time.minutes': '{n}min',
+  'time.hours': '{n}h',
+  'time.days': '{n}d',
+  'time.months': '{n}mo',
+  'time.years': '{n}y',
 } satisfies Record<SidebarKey, string>
 
 /** Japanese copy, checked against the English keys. */
@@ -43,6 +68,18 @@ export const ja = {
   'navigation.label': 'ナビゲーション',
   'panels.more': 'その他',
   'version.copied': 'バージョンをコピーしました',
+  'instances.group': '{name}、{state}、{n}件のセッション',
+  'instances.state.connected': '接続済み',
+  'instances.state.connecting': '接続中',
+  'instances.state.unreachable': '到達不可',
+  'instances.expand': 'さらに{n}件のセッションを表示',
+  'instances.collapse': '折りたたむ',
+  'time.now': '今',
+  'time.minutes': '{n}分',
+  'time.hours': '{n}時間',
+  'time.days': '{n}日',
+  'time.months': '{n}か月',
+  'time.years': '{n}年',
 } satisfies Record<keyof typeof en, string>
 
 /** Spanish dictionary, checked against the English keys. */
@@ -57,6 +94,18 @@ export const es = {
   'navigation.label': 'Navegación',
   'panels.more': 'Más',
   'version.copied': 'Versión copiada',
+  'instances.group': '{name}, {state}, {n} sesiones',
+  'instances.state.connected': 'Conectado',
+  'instances.state.connecting': 'Conectando',
+  'instances.state.unreachable': 'Inaccesible',
+  'instances.expand': 'Mostrar {n} sesiones más',
+  'instances.collapse': 'Mostrar menos',
+  'time.now': 'ahora',
+  'time.minutes': '{n}min',
+  'time.hours': '{n}h',
+  'time.days': '{n}d',
+  'time.months': '{n}mo',
+  'time.years': '{n}a',
 } satisfies Record<keyof typeof en, string>
 
 /** French dictionary, checked against the English keys. */
@@ -71,6 +120,18 @@ export const fr = {
   'navigation.label': 'Navigation',
   'panels.more': 'Plus',
   'version.copied': 'Version copiée',
+  'instances.group': '{name}, {state}, {n} sessions',
+  'instances.state.connected': 'Connecté',
+  'instances.state.connecting': 'Connexion',
+  'instances.state.unreachable': 'Inaccessible',
+  'instances.expand': 'Afficher {n} sessions de plus',
+  'instances.collapse': 'Afficher moins',
+  'time.now': 'maintenant',
+  'time.minutes': '{n}min',
+  'time.hours': '{n}h',
+  'time.days': '{n}j',
+  'time.months': '{n}mois',
+  'time.years': '{n}an',
 } satisfies Record<keyof typeof en, string>
 
 /** German dictionary, checked against the English keys. */
@@ -85,6 +146,18 @@ export const de = {
   'navigation.label': 'Navigation',
   'panels.more': 'Mehr',
   'version.copied': 'Version kopiert',
+  'instances.group': '{name}, {state}, {n} Sitzungen',
+  'instances.state.connected': 'Verbunden',
+  'instances.state.connecting': 'Verbindung läuft',
+  'instances.state.unreachable': 'Nicht erreichbar',
+  'instances.expand': '{n} weitere Sitzungen anzeigen',
+  'instances.collapse': 'Weniger anzeigen',
+  'time.now': 'jetzt',
+  'time.minutes': '{n}min',
+  'time.hours': '{n}h',
+  'time.days': '{n}T',
+  'time.months': '{n}Mon',
+  'time.years': '{n}J',
 } satisfies Record<keyof typeof en, string>
 
 /** Russian dictionary, checked against the English keys. */
@@ -99,6 +172,18 @@ export const ru = {
   'navigation.label': 'Навигация',
   'panels.more': 'Ещё',
   'version.copied': 'Версия скопирована',
+  'instances.group': '{name}, {state}, сессий: {n}',
+  'instances.state.connected': 'Подключено',
+  'instances.state.connecting': 'Подключение',
+  'instances.state.unreachable': 'Недоступно',
+  'instances.expand': 'Показать ещё {n} сессий',
+  'instances.collapse': 'Свернуть',
+  'time.now': 'сейчас',
+  'time.minutes': '{n}мин',
+  'time.hours': '{n}ч',
+  'time.days': '{n}д',
+  'time.months': '{n}мес',
+  'time.years': '{n}г',
 } satisfies Record<keyof typeof en, string>
 
 /** Portuguese dictionary, checked against the English keys. */
@@ -113,4 +198,16 @@ export const pt = {
   'navigation.label': 'Navegação',
   'panels.more': 'Mais',
   'version.copied': 'Versão copiada',
+  'instances.group': '{name}, {state}, {n} sessões',
+  'instances.state.connected': 'Conectado',
+  'instances.state.connecting': 'Conectando',
+  'instances.state.unreachable': 'Inacessível',
+  'instances.expand': 'Mostrar mais {n} sessões',
+  'instances.collapse': 'Mostrar menos',
+  'time.now': 'agora',
+  'time.minutes': '{n}min',
+  'time.hours': '{n}h',
+  'time.days': '{n}d',
+  'time.months': '{n}mês',
+  'time.years': '{n}a',
 } satisfies Record<keyof typeof en, string>

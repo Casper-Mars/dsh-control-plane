@@ -14,7 +14,7 @@ import type { SidebarPanelMetadata, SidebarRootInjected, SidebarSectionInjected 
 import { createPanelPins } from './panel-pins.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
-import { instanceGroupsSlot, type InstanceGroupView } from './InstanceGroups.tsx'
+import { instanceGroupsSlot, type InstanceGroupView, type InstanceInfoView } from './InstanceGroups.tsx'
 import { PanelIcon } from './PanelIcon.tsx'
 import { en, ja, es, fr, de, ru, pt, zh, type SidebarKey } from './locales.ts'
 
@@ -40,6 +40,46 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'sidebar'
+
+/** One generated Remote result envelope. */
+type RemoteFrame<T> = { ok: true; value: T } | { ok: false; error: unknown }
+
+/** The control-plane Remote namespace this Client may compose. */
+interface ControlPlaneRemote {
+  tree: () => Promise<RemoteFrame<readonly InstanceGroupView[]>>
+  instances: () => Promise<RemoteFrame<readonly InstanceInfoView[]>>
+}
+
+/**
+ * Resolve the control-plane Remote namespace, when this Client is composed as
+ * one.
+ *
+ * Two things are easy to get wrong here:
+ * 1. A Remote namespace is its own Cordis service (key `remote.<namespace>`),
+ *    not a property of a `remote` object; `ctx.remote` also throws
+ *    "cannot get property \"remote\" without inject" because this plugin does
+ *    not declare that service. Hence the service key through `ctx.get`.
+ * 2. Generated Remote methods return the `{ ok, value }` envelope, which the
+ *    reader must unwrap itself.
+ *
+ * The namespace mounts when the Host advertises it, which can be after this
+ * apply, so the lookup stays lazy (per read) instead of gating registration.
+ * @param ctx - client root context.
+ * @returns the namespace face, or undefined on a plain dsh Client.
+ */
+function controlPlaneRemote(ctx: ClientContext): ControlPlaneRemote | undefined {
+  // The service key is dynamic, so `ctx.get` falls back to its `any` overload:
+  // this one narrowing assertion is the single boundary naming the face.
+  const remote = ctx.get('remote.controlPlane') as ControlPlaneRemote | undefined
+  return remote
+}
+
+/**
+ * Stable empty frames: a plain dsh Client re-reads "no control plane" every
+ * poll, and identical references let React skip the render.
+ */
+const NO_GROUPS: readonly InstanceGroupView[] = []
+const NO_INSTANCES: readonly InstanceInfoView[] = []
 
 interface WorkspaceNavigation {
   startSession(workspaceId?: Parameters<SidebarRootInjected['startSession']>[0]): void
@@ -109,26 +149,27 @@ export function apply(ctx: ClientContext): void {
       inject: injectProps,
     }, SidebarRoot)
   })
-  // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在。
-  //
-  // 两点容易踩：
-  // 1. Remote 命名空间是独立的 Cordis 服务（键 `remote.<namespace>`），不是
-  //    `remote` 对象的属性；用 `ctx.remote` 还会因为没声明 inject 'remote' 直接抛
-  //    "cannot get property \"remote\" without inject"。所以按服务键用 `ctx.get`。
-  // 2. 生成的 Remote 方法返回 RemoteResult 信封 `{ ok, value }`，需要自己解包。
+  // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在，两次读取
+  // 都返回同一个空帧，组件不渲染、也不产生任何 Remote 调用。
+  // 读取失败时抛错（而不是返回空树），组件据此保留上一帧。
   ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
     name: 'sidebar.instances',
     locale: NS,
-  }, instanceGroupsSlot(async () => {
-    const controlPlane = ctx.get('remote.controlPlane') as unknown as {
-      tree: () => Promise<
-        | { ok: true; value: readonly InstanceGroupView[] }
-        | { ok: false; error: unknown }
-      >
-    } | undefined
-    if (controlPlane === undefined) return []
-    const result = await controlPlane.tree()
-    return result.ok ? result.value : []
+  }, instanceGroupsSlot({
+    fetchTree: async () => {
+      const controlPlane = controlPlaneRemote(ctx)
+      if (controlPlane === undefined) return NO_GROUPS
+      const result = await controlPlane.tree()
+      if (!result.ok) throw result.error
+      return result.value
+    },
+    fetchInstances: async () => {
+      const controlPlane = controlPlaneRemote(ctx)
+      if (controlPlane === undefined) return NO_INSTANCES
+      const result = await controlPlane.instances()
+      if (!result.ok) throw result.error
+      return result.value
+    },
   })))
   // macOS desktop hides the collapsed sidebar entirely, so the open/New
   // Session controls move into the frame's window-chrome seat beside the

@@ -56,7 +56,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * and binds its own vertical scroller through `useSectionScroller`.
      */
     /** Control-plane instance groups rendered above the workspace browser. */
-    'sidebar.instances': { kind: 'single'; scope: 'root'; owner: Record<never, never> }
+    'sidebar.instances': { kind: 'single'; scope: 'root'; owner: InstanceGroupsOwnerProps }
 
     'sidebar.workspaces': {
       kind: 'single'
@@ -89,6 +89,16 @@ export interface SidebarBrandMarkOwnerProps {
 export interface SidebarBrandNameOwnerProps {
   /** Marker field: the occupant owns its own content and width. */
   children?: never
+}
+
+/**
+ * Column state supplied to the control-plane instance section. The section is
+ * a wide-only list (32px rows in the shell's row geometry), so the collapsed
+ * rail renders nothing rather than a clipped column of rows.
+ */
+export interface InstanceGroupsOwnerProps {
+  /** Whether the column currently shows its expanded (wide) body. */
+  readonly wide: boolean
 }
 
 /** Icon presentation supplied by the global panel row. */

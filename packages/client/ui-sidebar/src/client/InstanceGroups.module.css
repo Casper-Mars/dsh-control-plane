@@ -1,44 +1,232 @@
+/* Control-plane instance tree.
+
+   The section reuses the official Workspace-browser row language rather than
+   inventing one (ui-workspace `rows/Rows.module.css` + `rows/WorkspaceBrowser.module.css`):
+
+   - the shell's own geometry variables (`--dsh-sidebar-row-padding`,
+     `--dsh-sidebar-label-gap`, `--dsh-sidebar-paint-inset`) so rows line up with
+     the panel rows above and the workspace browser of an ordinary dsh;
+   - the design-token ink (`--dsw-alias-*`) and radii (`--dsw-radius-*`) that
+     make light and dark themes identical to the official rows;
+   - 32px rows, 16px leading cells, 14px inherited titles, ellipsis, the
+     hover fill, and the folder → chevron swap.
+
+   No color literals and no private type scale: nothing here sets 11px/12px, and
+   every ink resolves through a token (see the theme package for the values).
+
+   One level of indentation: a session row sits 12px inside its workspace row,
+   the same `depth * 12` step the official tree uses. */
+
 .root {
   display: flex;
   flex-direction: column;
+  padding-bottom: 8px;
+}
+
+/* Instance blocks stack like the official group sections: 4px between groups,
+   2px between the rows inside one group. One indent step inside the group:
+   session rows sit 12px past their workspace row, the official `depth * 12`. */
+.group {
+  --dsh-workspace-indent: 12px;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
-  padding: 6px 8px 8px;
-  border-bottom: 1px solid var(--dsh-color-border-subtle, rgb(255 255 255 / 8%));
 }
 
-.group { font-size: 12px; }
+.group + .group {
+  margin-top: 4px;
+}
 
-.header {
+/* Header and workspace rows are the official 32px project row: a leading 16px
+   cell, a flexible title, and a trailing count. They are buttons because both
+   fold their subtree; the chrome (padding, paint inset, radius, hover fill)
+   is the row chrome, so a header reads as part of the same list. */
+.groupHeader,
+.workspaceRow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--dsh-sidebar-label-gap);
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  box-sizing: border-box;
+  border: none;
+  border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  background-clip: padding-box;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
-  border-radius: 4px;
-  list-style: none;
-  color: var(--dsh-color-text-secondary, #9aa0a6);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.header::-webkit-details-marker { display: none; }
-.header:hover { background: var(--dsh-color-surface-hover, rgb(255 255 255 / 6%)); }
-.label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.activity { color: var(--dsh-color-accent, #7aa2f7); }
-.count { opacity: 0.6; }
-
-.workspace { padding: 2px 6px 2px 14px; }
-.path { opacity: 0.55; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.session {
+/* Session rows keep the same metrics as the official session row, one indent
+   step in (`--dsh-workspace-indent`, set on the group). Nothing here is
+   clickable yet: S3 owns opening a federated session, so the cursor stays a
+   plain arrow and no click handler is attached. */
+.sessionRow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 4px;
-  font-size: 12px;
-  opacity: 0.85;
+  gap: var(--dsh-sidebar-label-gap);
+  height: 32px;
+  box-sizing: border-box;
+  border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  background-clip: padding-box;
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  padding-inline-start: calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
+  );
+  color: var(--dsw-alias-label-primary);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (hover: hover) {
+  .groupHeader:hover,
+  .workspaceRow:hover,
+  .sessionRow:hover {
+    background-color: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+.groupHeader:focus-visible,
+.workspaceRow:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+/* Leading cell shared by all three row kinds: the official 16x20 box that
+   holds a state dot, a folder, or the fold chevron. */
+.slot {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Reachability dot at rest, fold chevron on hover (the exact affordance swap
+   the official project row performs between its folder and its arrow), so the
+   status is always readable at a glance and the fold state appears where the
+   pointer is. */
+.state,
+.folder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chevron {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-caption);
+}
+
+.arrow {
+  transition: transform 150ms var(--ds-ease-in-out);
+}
+
+.arrowOpen {
+  transform: rotate(90deg);
+}
+
+@media (hover: hover) {
+  .groupHeader:hover .state,
+  .workspaceRow:hover .folder {
+    display: none;
+  }
+
+  .groupHeader:hover .chevron,
+  .workspaceRow:hover .chevron {
+    display: inline-flex;
+  }
+}
+
+/* Keyboard users get the same reveal, because they cannot hover. */
+.groupHeader:focus-visible .state,
+.workspaceRow:focus-visible .folder {
+  display: none;
+}
+
+.groupHeader:focus-visible .chevron,
+.workspaceRow:focus-visible .chevron {
+  display: inline-flex;
+}
+
+/* Titles inherit the sidebar's 14px and take the official row's 20px line
+   height; the trailing metadata uses the color step, not a smaller size. */
+.title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 20px;
 }
 
-.dot { width: 6px; height: 6px; border-radius: 50%; background: currentcolor; opacity: 0.35; flex: none; }
-.dotRunning { width: 6px; height: 6px; border-radius: 50%; background: var(--dsh-color-accent, #7aa2f7); flex: none; }
+/* Instance/workspace session counts sit on the row's trailing edge, the same
+   edge the official section header's actions end on. */
+.count {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+}
+
+/* The official row's timestamp step (10px) — the one small type size the
+   official list itself uses for a session's trailing label. */
+.time {
+  flex: none;
+  margin-inline-end: -1px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Show more"/"Show less": the official overflow control's 28px row and
+   padding formula, which lands its text on the session titles' left edge.
+   The official control sets 12px here; this section inherits the row size
+   instead, because the shared rule for this surface is token type, not a
+   private 11/12px step. */
+.more {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  padding: 0 var(--dsh-sidebar-row-padding) 0 calc(
+    var(--dsh-sidebar-row-padding) + 16px + var(--dsh-sidebar-label-gap) + var(--dsh-workspace-indent)
+  );
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .more:hover {
+    color: var(--dsw-alias-label-secondary);
+  }
+}
+
+.more:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow {
+    transition: none;
+  }
+}
