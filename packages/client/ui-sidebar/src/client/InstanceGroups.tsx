@@ -35,8 +35,10 @@ export type InstanceState = 'connecting' | 'connected' | 'unreachable'
 export interface InstanceSessionView {
   /** Federated key, `<instanceId>:<sessionId>`. */
   readonly key: string
-  /** Instance-local session id; the row's display title until the upstream protocol carries one. */
+  /** Instance-local session id; the display fallback when no title is reported. */
   readonly sessionId?: string | undefined
+  /** Title the session reported, when the control plane mapped one. */
+  readonly title?: string | undefined
   /** Whether an agent turn is currently running. */
   readonly running: boolean
   /** Last update time, epoch milliseconds. */
@@ -158,13 +160,14 @@ function reachabilityDot(state: InstanceState): StateDotState {
 }
 
 /**
- * Display title of a session row. The upstream protocol carries no session
- * title yet, so the row falls back to the instance-local id (S2 keeps the
- * protocol untouched on purpose).
+ * Display title of a session row: the reported title when it is non-blank,
+ * then the instance-local id, then the key's suffix as the last resort.
  * @param session - session row.
  * @returns the title text.
  */
 function sessionTitle(session: InstanceSessionView): string {
+  const title = session.title?.trim()
+  if (title !== undefined && title.length > 0) return title
   if (session.sessionId !== undefined && session.sessionId.length > 0) return session.sessionId
   const separator = session.key.indexOf(':')
   return separator < 0 ? session.key : session.key.slice(separator + 1)

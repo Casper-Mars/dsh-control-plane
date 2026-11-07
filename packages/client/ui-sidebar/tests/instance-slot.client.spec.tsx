@@ -77,7 +77,7 @@ const TREE: readonly InstanceGroupView[] = [{
     key: 'cto:/repo',
     path: '/repo',
     runningCount: 1,
-    sessions: [{ key: 'cto:s1', sessionId: 's1', running: true, updatedAt: 0 }],
+    sessions: [{ key: 'cto:s1', sessionId: 's1', title: 'Fix the login flow', running: true, updatedAt: 0 }],
   }],
 }]
 
@@ -98,7 +98,7 @@ describe('sidebar.instances wiring', () => {
       expect(instances).toHaveBeenCalledOnce()
       expect(view.getByRole('button', { name: 'CTO(cto), Connected, 1 sessions' })).toBeTruthy()
       expect(view.getByText('/repo')).toBeTruthy()
-      expect(view.getByText('s1')).toBeTruthy()
+      expect(view.getByText('Fix the login flow')).toBeTruthy()
       expect(view.container.querySelector('[data-instance-state="connected"]')).not.toBeNull()
     } finally {
       await sidebar.dispose()
@@ -126,7 +126,7 @@ describe('sidebar.instances wiring', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
       expect(tree).toHaveBeenCalledTimes(2)
       expect(view.getByRole('button', { name: /CTO\(cto\), Connected/ })).toBeTruthy()
-      expect(view.getByText('s1')).toBeTruthy()
+      expect(view.getByText('Fix the login flow')).toBeTruthy()
     } finally {
       await sidebar.dispose()
     }

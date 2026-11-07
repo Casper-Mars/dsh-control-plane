@@ -81,6 +81,66 @@ describe('InstanceGroups', () => {
     expect(screen.getByText('now')).toBeTruthy()
   })
 
+  it('renders the reported session title instead of the id', async () => {
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [{
+          instanceId: 'titled',
+          label: 'TITLED(titled)',
+          runningCount: 0,
+          sessionCount: 1,
+          workspaces: [{
+            key: 'titled:/workspace',
+            path: '/workspace',
+            runningCount: 0,
+            sessions: [{
+              key: 'titled:session-9',
+              sessionId: 'session-9',
+              title: 'Fix the login flow',
+              running: false,
+              updatedAt: Date.now(),
+            }],
+          }],
+        }]}
+        fetchInstances={async () => reachability(['titled'])}
+        t={t}
+      />,
+    )
+    await settle()
+    expect(screen.getByText('Fix the login flow')).toBeTruthy()
+    expect(screen.queryByText('session-9')).toBeNull()
+    // The hover tooltip keeps the full federated key, title or not.
+    const row = container.querySelector('[data-session-key="titled:session-9"]') as HTMLElement
+    expect(row.getAttribute('title')).toBe('titled:session-9')
+  })
+
+  it('falls back to the session id when the title is blank or absent', async () => {
+    render(
+      <InstanceGroups
+        fetchTree={async () => [{
+          instanceId: 'untitled',
+          label: 'UNTITLED(untitled)',
+          runningCount: 0,
+          sessionCount: 2,
+          workspaces: [{
+            key: 'untitled:/workspace',
+            path: '/workspace',
+            runningCount: 0,
+            sessions: [
+              { key: 'untitled:blank', sessionId: 'blank', title: '   ', running: false, updatedAt: Date.now() },
+              { key: 'untitled:plain', sessionId: 'plain', running: false, updatedAt: Date.now() },
+            ],
+          }],
+        }]}
+        fetchInstances={async () => reachability(['untitled'])}
+        t={t}
+      />,
+    )
+    await settle()
+    expect(screen.getByText('blank')).toBeTruthy()
+    expect(screen.getByText('plain')).toBeTruthy()
+  })
+
   it('reports the two other reachability states through the same dot vocabulary', async () => {
     const connecting = render(
       <InstanceGroups

@@ -217,13 +217,7 @@ export class Upstream {
       const value = unwrap(await remote.session.list({}, signal))
       this.state = 'connected'
       this.lastError = undefined
-      return value.items.map(row => ({
-        sessionId: String(row.sessionId),
-        cwd: row.cwd,
-        updatedAt: Number(row.updatedAt),
-        running: row.running === true,
-        agentAvailable: row.agentAvailable === true ? true : row.agentAvailable === false ? false : undefined,
-      }))
+      return value.items.map(toSessionRow)
     } catch (error) {
       this.state = 'unreachable'
       this.lastError = message(error)
@@ -292,12 +286,38 @@ function unwrap<T>(result: RemoteResult<T>): T {
 }
 
 /** Shape the Host's `SessionSummary` arrives in; kept local to this seam. */
-interface RawSummary {
+export interface RawSummary {
   readonly sessionId: unknown
   readonly cwd?: string
   readonly updatedAt?: unknown
   readonly running?: unknown
   readonly agentAvailable?: unknown
+  /** Summary projection block; only the `title` value is read here. */
+  readonly projections?: {
+    readonly values?: {
+      readonly title?: unknown
+    }
+  }
+}
+
+/**
+ * Project one upstream summary onto the row the sidebar consumes. The title is
+ * optional: the projection reports `null` before a title exists, and a blank
+ * string never becomes a row field, so the sidebar keeps its id fallback.
+ * @param raw - one `SessionSummary` as the Host sent it.
+ * @returns the normalized row; `title` is present only when non-blank.
+ */
+export function toSessionRow(raw: RawSummary): SessionRow {
+  const candidate = raw.projections?.values?.title
+  const title = typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : undefined
+  return {
+    sessionId: String(raw.sessionId),
+    cwd: raw.cwd,
+    updatedAt: Number(raw.updatedAt),
+    running: raw.running === true,
+    agentAvailable: raw.agentAvailable === true ? true : raw.agentAvailable === false ? false : undefined,
+    ...(title === undefined ? {} : { title }),
+  }
 }
 
 /** Normalize an unknown thrown value into a message. */

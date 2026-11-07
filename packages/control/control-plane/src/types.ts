@@ -19,6 +19,12 @@ export interface SessionRow {
   readonly sessionId: string
   /** Instance-local working directory when the instance reports one. */
   readonly cwd?: string | undefined
+  /**
+   * Title the session reported through its `title` projection. Present only
+   * when the projection carried a non-blank string; absent otherwise, so the
+   * sidebar falls back to the session id.
+   */
+  readonly title?: string | undefined
   /** Last update time, epoch milliseconds. */
   readonly updatedAt: number
   /** Whether an agent turn is currently running. */
