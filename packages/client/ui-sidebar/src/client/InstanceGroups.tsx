@@ -123,8 +123,8 @@ export interface InstanceGroupsReaders {
    *
    * Optional for the same reason as {@link openSession}: an isolated fixture
    * renders the tree without a Session service. A composed control-plane
-   * Client always wires it, which is the only composition that shows the
-   * button.
+   * Client always wires it. Without it the section renders no create control
+   * at all, rather than a button that cannot do anything.
    */
   readonly createSession?: ((workspaceId: string) => Promise<string>) | undefined
   /**
@@ -341,7 +341,9 @@ export function InstanceGroups({
   // synchronous guard (below) refuses a second click from the same tick.
   const [creating, setCreating] = useState<readonly string[]>([])
   // Last create failure per workspace key. A failed create stays inline under
-  // its row instead of taking the tree down; the next attempt clears it.
+  // its row instead of taking the tree down; only a later success in the same
+  // workspace (or that workspace leaving the tree) drops the message, so a
+  // retry keeps showing why the previous attempt failed while it runs.
   const [createFailures, setCreateFailures] = useState<Readonly<Record<string, string>>>({})
   // Synchronous pending set: React state lands after the handler returns, so
   // two clicks in one tick would both pass an `includes` check.
@@ -359,6 +361,30 @@ export function InstanceGroups({
   // Latest readers: the poll reads through this ref, so a caller that hands in
   // fresh closures every render cannot restart (or multiply) the timer.
   const readers = useRef({ fetchTree, retry, createSession, refreshTree })
+  // Monotonic read ticket. Poll frames, retry re-reads, and post-create
+  // refreshes all race: only the newest *requested* frame may land, otherwise a
+  // slower older read would commit over a newer one and drop rows it already
+  // showed. Allocated before the read starts, compared when it settles.
+  const frameTicket = useRef(0)
+  /**
+   * Claim the ticket of a read that is about to start.
+   * @returns the ticket to pass to {@link commitFrame}.
+   */
+  const beginFrame = (): number => {
+    frameTicket.current += 1
+    return frameTicket.current
+  }
+  /**
+   * Commit a frame, unless a newer read has been requested since this one
+   * started (that newer request owns the tree now, even if it is still in
+   * flight or will fail and keep the previous frame).
+   * @param ticket - ticket claimed by {@link beginFrame} for this read.
+   * @param next - the frame the read produced.
+   */
+  const commitFrame = (ticket: number, next: readonly InstanceGroupView[]): void => {
+    if (ticket !== frameTicket.current) return
+    setGroups(next)
+  }
   // Frames and retry outcomes that arrive after unmount are dropped.
   const mounted = useRef(true)
   // A function, not a property read: TypeScript would otherwise narrow the
@@ -375,8 +401,9 @@ export function InstanceGroups({
   useEffect(() => {
     let disposed = false
     const read = (): void => {
+      const ticket = beginFrame()
       void readers.current.fetchTree().then((next) => {
-        if (!disposed) setGroups(next)
+        if (!disposed) commitFrame(ticket, next)
       }, () => {
         // Keep the previous tree: a failed frame must not render as "no instances".
       })
@@ -388,6 +415,25 @@ export function InstanceGroups({
       clearInterval(timer)
     }
   }, [intervalMs])
+
+  // Failure messages belong to the frame that produced them. Once a workspace
+  // leaves the tree its message is meaningless, and keeping the key would
+  // resurrect the old reason the moment the same path came back. Pruning here
+  // (rather than inside a setGroups updater, which must stay pure) keeps the
+  // correction in one place; returning `previous` unchanged when nothing is
+  // stale keeps it out of a render loop.
+  useEffect(() => {
+    if (groups === undefined) return
+    const live = new Set<string>()
+    for (const group of groups) {
+      for (const workspace of group.workspaces) live.add(workspace.key)
+    }
+    setCreateFailures((previous) => {
+      const kept = Object.entries(previous).filter(([key]) => live.has(key))
+      if (kept.length === Object.keys(previous).length) return previous
+      return Object.fromEntries(kept)
+    })
+  }, [groups])
 
   /**
    * Retry one instance and re-read the tree so the group shows the outcome of
@@ -402,10 +448,11 @@ export function InstanceGroups({
         await readers.current.retry(instanceId)
         // Unmounted while the attempt ran: skip the pointless re-read.
         if (!isMounted()) return
+        const ticket = beginFrame()
         const next = await readers.current.fetchTree()
         // Unmounted while the frame was in flight: nothing to update.
         if (!isMounted()) return
-        setGroups(next)
+        commitFrame(ticket, next)
       } catch {
         // A refused read keeps the previous frame; the next poll retries.
       } finally {
@@ -440,7 +487,9 @@ export function InstanceGroups({
    * which this section prefixes before navigating. A failed refresh does not
    * fail the operation: the create already succeeded, the poll recovers the
    * tree, and navigation still proceeds. A failed create stays inline under
-   * the row and restores the button once the attempt settles.
+   * the row and restores the button once the attempt settles; it is dropped
+   * only when this workspace creates successfully, so a retry never runs
+   * behind a blank line.
    * @param instanceId - owning instance, used to qualify the returned Session id.
    * @param workspaceKey - complete federated Workspace key of the row.
    */
@@ -449,21 +498,25 @@ export function InstanceGroups({
     if (createSession === undefined || creatingKeys.current.has(workspaceKey)) return
     creatingKeys.current.add(workspaceKey)
     setCreating(previous => [...previous, workspaceKey])
-    setCreateFailures((previous) => {
-      if (previous[workspaceKey] === undefined) return previous
-      return Object.fromEntries(
-        Object.entries(previous).filter(([key]) => key !== workspaceKey),
-      )
-    })
     void (async () => {
       try {
         const sessionId = await createSession(workspaceKey)
         if (!isMounted()) return
+        // The attempt succeeded: the reason for the previous failure no longer
+        // describes this workspace. Cleared here, not when the retry starts, so
+        // the message stays up while the user waits for the outcome.
+        setCreateFailures((previous) => {
+          if (previous[workspaceKey] === undefined) return previous
+          return Object.fromEntries(
+            Object.entries(previous).filter(([key]) => key !== workspaceKey),
+          )
+        })
         const refresh = readers.current.refreshTree
         if (refresh !== undefined) {
           try {
+            const ticket = beginFrame()
             const next = await refresh()
-            if (isMounted()) setGroups(next)
+            if (isMounted()) commitFrame(ticket, next)
           } catch {
             // Creation succeeded; the next poll carries the new row.
           }
@@ -544,11 +597,16 @@ export function InstanceGroups({
                 still carried workspaces for a now-unreachable instance must not
                 leave clickable rows behind. A connecting instance keeps the
                 rows its frame carried — it is on its way, not gone. */}
+            {/* A create control appears only under a reachable instance whose
+                create reader is wired: on a connecting group it is not offered
+                yet, and without a reader it would be a button that cannot do
+                anything. The gate reads the prop (not the ref) so a reader that
+                appears later re-renders the control immediately. */}
             {expanded && group.state !== 'unreachable' && group.workspaces.map(workspace => (
               <WorkspaceGroup
                 key={workspace.key}
                 workspace={workspace}
-                canCreate={group.state === 'connected'}
+                canCreate={group.state === 'connected' && createSession !== undefined}
                 creating={creating.includes(workspace.key)}
                 createFailure={createFailures[workspace.key]}
                 state={disclosureState}
@@ -610,7 +668,8 @@ function InstanceOffline({ group, retrying, onRetry, t }: {
 /**
  * One workspace row plus its session rows and its "show more" control.
  * @param props.workspace - workspace node.
- * @param props.canCreate - whether this instance is connected (a create on a connecting group is not offered).
+ * @param props.canCreate - whether this instance is connected and a create reader is wired
+ *   (a connecting group and a reader-less fixture offer no control).
  * @param props.creating - whether a create is in flight for this workspace.
  * @param props.createFailure - last create failure for this workspace, if any.
  * @param props.state - disclosure snapshot.
