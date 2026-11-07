@@ -363,6 +363,11 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       hooks: {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
       },
+      // The control-plane Remote namespace is a service of its own, mounted only
+      // when the Host advertises it; a plain dsh Client resolves the key to
+      // undefined. Read through `ctx.get` because this plugin never injects
+      // `remote` itself.
+      controlPlane: ctx.get('remote.controlPlane') !== undefined,
       selectWorkspace: workspaceId => workspaceNavigation.openWorkspace(workspaceId, (nextId) => {
         if (sessionId !== undefined && nextId !== sessionId) {
           const from = inputHub.shell(sessionId)

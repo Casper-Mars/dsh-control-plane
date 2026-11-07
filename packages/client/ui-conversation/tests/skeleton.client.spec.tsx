@@ -147,6 +147,8 @@ function mount(
     entryActions?: boolean
     /** Isolate header capability checks from the composer's required layout observers. */
     headerOnly?: boolean
+    /** Compose the resident content the way a control-plane Client does. */
+    controlPlane?: boolean
   } = {},
 ) {
   const sessionId = 'sessionId' in options ? options.sessionId : SID
@@ -370,6 +372,7 @@ function mount(
       ...allowAllAccess,
       useProjection: (() => undefined),
       useComposerBlock: select => select(options.composerBlock),
+      controlPlane: options.controlPlane === true,
       useInput,
       inputActions,
       renderSlot,
@@ -1073,5 +1076,58 @@ describe('ConversationRoot resident composer', () => {
   it('hero phase renders no width handles (no transcript to size)', () => {
     const b = mount(sessionSnapshotOf({ blank: true }))
     expect(b.view.container.querySelector('[data-width-handle]')).toBeNull()
+  })
+})
+
+// t100641: a control plane owns remote instances, so its home has no local
+// prompt to offer. The notice replaces the Hero; selecting a Session (federated
+// included) keeps the ordinary composer.
+describe('control-plane home', () => {
+  it('replaces the hero composer with the centered notice and no workspace chrome', () => {
+    const b = mount(sessionSnapshotOf(), [{ ...workspace('one'), sessionIds: [SID] }], undefined, {
+      sessionId: undefined,
+      controlPlane: true,
+    })
+    const notice = b.view.container.querySelector('[data-conversation-control-plane-empty]')
+    expect(notice).not.toBeNull()
+    expect(b.view.getByText(zh['empty.controlPlane.title'])).toBeTruthy()
+    expect(b.view.getByText(zh['empty.controlPlane.description'])).toBeTruthy()
+    // The composer's text surface is a Lexical contenteditable; neither it nor
+    // any other input exists in the notice.
+    expect(b.view.container.querySelector('textarea')).toBeNull()
+    expect(b.view.container.querySelector('[contenteditable]')).toBeNull()
+    expect(notice!.querySelector('input, textarea, button, [role="combobox"]')).toBeNull()
+    // No composer chain, no hero workspace chip, no agent-preset/model seats.
+    expect(b.slotCalls).not.toContain('conversation.composer.bar')
+    expect(b.slotCalls).not.toContain('conversation.composer')
+    expect(b.slotCalls).not.toContain('conversation.hero.workspace')
+    expect(b.slotCalls).not.toContain('conversation.hero.agentPreset')
+    expect(b.slotCalls).not.toContain('conversation.hero.options')
+    // The composer tool row (and with it the model selector) never mounts.
+    expect(b.seatOwners).toEqual([])
+    expect(b.view.queryByText('Choose workspace')).toBeNull()
+    expect(b.view.queryByText('one')).toBeNull()
+  })
+
+  it('keeps the composer, model seat, and workspace chrome for a selected Session', () => {
+    const b = mount(sessionSnapshotOf(), [{ ...workspace('one'), sessionIds: [SID] }], undefined, {
+      controlPlane: true,
+    })
+    expect(b.view.container.querySelector('[data-conversation-control-plane-empty]')).toBeNull()
+    expect(b.view.container.querySelector('[contenteditable="true"]')).not.toBeNull()
+    expect(b.slotCalls).toContain('conversation.composer.bar')
+    // The model selector is a seat of the composer tool row.
+    expect(b.seatOwners.map(seat => seat.key)).toContain('conversation.input.model')
+  })
+
+  it('leaves the plain dsh hero and composer unchanged', () => {
+    const b = mount(sessionSnapshotOf(), [{ ...workspace('one'), sessionIds: [SID] }], undefined, {
+      sessionId: undefined,
+    })
+    expect(b.view.container.querySelector('[data-conversation-control-plane-empty]')).toBeNull()
+    expect(b.view.getByText(zh['hero.headline'])).toBeTruthy()
+    expect(b.view.container.querySelector('[contenteditable]')).not.toBeNull()
+    expect(b.slotCalls).toContain('conversation.hero.workspace')
+    expect(b.slotCalls).toContain('conversation.composer.bar')
   })
 })

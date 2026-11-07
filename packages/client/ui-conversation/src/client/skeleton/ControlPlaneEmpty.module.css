@@ -1,0 +1,31 @@
+/* Control-plane home: the column's vacant area, filled by one centered notice.
+   No composer, model selector, or workspace chrome is rendered here. */
+
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  padding: 24px;
+  text-align: center;
+  background: var(--dsw-alias-bg-base);
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-tertiary);
+}

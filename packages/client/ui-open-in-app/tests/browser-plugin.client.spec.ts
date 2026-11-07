@@ -56,7 +56,7 @@ const remote = {
 }
 
 /** Boot the browser half over a real slot tree that declares the header list and the document-preview seats. */
-async function bench() {
+async function bench(options: { controlPlane?: boolean } = {}) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   ctx.slots.register({
@@ -94,6 +94,8 @@ async function bench() {
   ctx.provide('sidebarRightTabs', {} as never)
   ctx.provide('remote.workspaceFiles', {} as never)
   ctx.provide('remote.session', remote.session as never)
+  // A control-plane Client mounts the Remote namespace as its own service.
+  if (options.controlPlane === true) ctx.provide('remote.controlPlane', {} as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   return { ctx, fiber, list, commands, layout, notify }
@@ -114,6 +116,15 @@ function toastSource(ctx: Context): Omit<OpenInAppToastSource, 'report'> {
 }
 
 describe('open-in-app browser half', () => {
+  it('skips the local-app workspace command on a control plane', async () => {
+    const plane = await bench({ controlPlane: true })
+    expect(plane.commands.has('workspace.openLocal')).toBe(false)
+    const plain = await bench()
+    expect(plain.commands.has('workspace.openLocal')).toBe(true)
+    await plane.fiber.dispose()
+    await plain.fiber.dispose()
+  })
+
   it('renders captured application images and the default glyph without an image URL', () => {
     const view = render(createElement(ContextMenuApplicationIcon, { icon: { key: 'open-in-app.application', src: '/captured.png' } }))
     expect(view.container.querySelector('img')?.getAttribute('src')).toBe('/captured.png')

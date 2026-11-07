@@ -47,6 +47,14 @@ export function createWorkspaceShortcutControls(): WorkspaceShortcutControls {
 }
 
 /**
+ * Commands that only target the local catalog. A control plane owns remote
+ * instances and has no local Session or Workspace to act on, so these must not
+ * be registered at all there: a listed entry whose every invocation is refused
+ * is still an entry point.
+ */
+const LOCAL_ONLY_COMMANDS: ReadonlySet<string> = new Set(['session.new', 'workspace.add'])
+
+/**
  * Register navigation commands against the existing workspace owner.
  * Rename requires a nonblank main Conversation with no modal other than the navigation drawer obscuring it.
  * @param ctx - plugin context with the shortcut, locale, and model services.
@@ -68,8 +76,13 @@ export function installWorkspaceShortcuts(
   const addReason = () => ctx.slots.entries('sidebar.workspaces.directoryFlow').length === 0
     ? t('shortcut.noPicker')
     : controls.state.getSnapshot().directoryBusy ? t('shortcut.directoryBusy') : null
+  // The control-plane Remote namespace is its own service; a plain dsh Client
+  // resolves the key to undefined. Read through `ctx.get` because this plugin
+  // never injects `remote`.
+  const controlPlane = ctx.get('remote.controlPlane') !== undefined
   const register = (id: string, label: () => string, aliases: string[], code: string,
     modifiers: ('primary' | 'alt' | 'shift')[], webModifiers: ('primary' | 'alt' | 'shift')[], resolve: ShortcutCommand['resolve']): void => {
+    if (controlPlane && LOCAL_ONLY_COMMANDS.has(id)) return
     ctx.effect(() => ctx.shortcuts.register({
       id: id as ShortcutCommandId, label, aliases, defaults: {
         'desktop:macos': { code, modifiers }, 'desktop:windows': { code, modifiers }, 'desktop:linux': { code, modifiers },

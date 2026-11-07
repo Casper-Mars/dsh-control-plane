@@ -80,7 +80,10 @@ export function apply(ctx: ClientContext): void {
     const appId = controller.currentApp()
     return session?.cwd && appId !== undefined ? { appId, path: session.cwd } : undefined
   }
-  ctx.effect(() => ctx.shortcuts.register({
+  // A control plane owns remote instances: there is no local workspace path to
+  // hand to a local application, so the command is never registered there
+  // rather than registered and refused on every invocation.
+  if (ctx.get('remote.controlPlane') === undefined) ctx.effect(() => ctx.shortcuts.register({
     id: 'workspace.openLocal' as ShortcutCommandId, label: () => t('open.tooltip'), aliases: ['open workspace locally', 'open in app'],
     defaults: {
       'desktop:macos': { code: 'KeyO', modifiers: ['primary', 'alt'] },

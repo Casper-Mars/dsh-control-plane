@@ -4,6 +4,7 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import { workspaceDisplayTitle } from '@deepseek-ai/dsh-api-workspace-controller/default-workspace'
 import type { ConversationContentProps, ConversationViewsProps, InputZone } from '../contract/slots.ts'
 import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
+import { ControlPlaneEmpty } from './ControlPlaneEmpty.tsx'
 import css from './ConversationRoot.module.css'
 
 function ConversationSessionView({ renderSlot }: ConversationViewsProps) {
@@ -16,10 +17,28 @@ function NoConversationWidthControls() {
 
 /**
  * Render the shared Conversation body and its occurrence-selected local Components.
+ *
+ * A control plane owns remote instances only, so with no Session selected there
+ * is nothing to prompt: the Hero's composer, model selector, and workspace
+ * chrome would all be dead controls. That one combination renders the centered
+ * notice instead. Selecting a Session (including a federated one) keeps the
+ * ordinary Conversation below.
  * @param props - Factory input, standard Session sources, and Conversation seats.
- * @returns the Conversation view, Composer, and optional width controls.
+ * @returns the empty notice, or the Conversation view, Composer, and width controls.
  */
 export function ConversationContent(props: ConversationContentProps) {
+  if (props.controlPlane && props.sessionId === undefined) {
+    return <ControlPlaneEmpty t={props.t} />
+  }
+  return <ConversationSurface {...props} />
+}
+
+/**
+ * Render the Conversation view, Composer chain, and optional width controls.
+ * @param props - Factory input, standard Session sources, and Conversation seats.
+ * @returns the Conversation body.
+ */
+function ConversationSurface(props: ConversationContentProps) {
   const {
     sessionId, phase, hero, useSession, useSessions, useSessionStatus,
     useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,

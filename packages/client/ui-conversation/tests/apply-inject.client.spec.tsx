@@ -51,7 +51,7 @@ function sessionFakeFor() {
   } satisfies SessionBehaviorOverrides
 }
 
-async function bench(renderQuote = false) {
+async function bench(renderQuote = false, options: { controlPlane?: boolean } = {}) {
   const runtime = await SlotTestRuntime.create()
   const rootUpload = vi.fn(() => Promise.resolve({
     ok: true as const,
@@ -110,6 +110,8 @@ async function bench(renderQuote = false) {
   runtime.ctx.provide('locale', locale)
   runtime.slots.installLocale(locale)
   runtime.ctx.provide('shortcuts', { catalog: createSnapshotStore([]) })
+  // A control-plane Client mounts the Remote namespace as its own service.
+  if (options.controlPlane === true) runtime.ctx.provide('remote.controlPlane', {})
   await runtime.mount({ inject: [...injectMenus], apply: applyMenus })
   await runtime.root.declare({
     'main': { kind: 'keyed', scope: 'root' },
@@ -166,6 +168,18 @@ async function bench(renderQuote = false) {
 }
 
 describe('Conversation inject API', () => {
+  it('reports the control-plane composition to the resident content', async () => {
+    const plain = await bench()
+    onTestFinished(() => plain.runtime.dispose())
+    expect(plain.residentApi(undefined).controlPlane).toBe(false)
+
+    const plane = await bench(false, { controlPlane: true })
+    onTestFinished(() => plane.runtime.dispose())
+    expect(plane.residentApi(undefined).controlPlane).toBe(true)
+    // Selecting a federated Session does not change the composition flag.
+    expect(plane.residentApi(ROOT).controlPlane).toBe(true)
+  })
+
   it.each(['zh', 'en'])('submits empty continuation input in the %s locale', async (locale) => {
     const b = await bench()
     onTestFinished(() => b.runtime.dispose())
