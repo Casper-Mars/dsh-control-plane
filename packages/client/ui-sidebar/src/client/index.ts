@@ -2,6 +2,7 @@
 import type {} from '@deepseek-ai/dsh-client-product-analytics/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
@@ -14,7 +15,9 @@ import type { SidebarPanelMetadata, SidebarRootInjected, SidebarSectionInjected 
 import { createPanelPins } from './panel-pins.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
-import { instanceGroupsSlot, type InstanceGroupView } from './InstanceGroups.tsx'
+import {
+  instanceGroupsSlot, mainSessionId, type InstanceGroupView, type SessionListSource,
+} from './InstanceGroups.tsx'
 import { PanelIcon } from './PanelIcon.tsx'
 import { en, ja, es, fr, de, ru, pt, zh, type SidebarKey } from './locales.ts'
 
@@ -82,6 +85,42 @@ const NO_GROUPS: readonly InstanceGroupView[] = []
 
 interface WorkspaceNavigation {
   startSession(workspaceId?: Parameters<SidebarRootInjected['startSession']>[0]): void
+  /** Opens a Session; the control-plane rows pass a complete federated key. */
+  openSession(target: string): void
+}
+
+/**
+ * Snapshot source for the instance section's current-Session marker.
+ *
+ * The `sessions` service is deliberately not a hard dependency of the sidebar
+ * plugin: a Client that composes the sidebar without the Session UI must still
+ * boot, and the section registers its rows only under a control plane. Binding
+ * through `ctx.inject` keeps the source optional yet reactive — it attaches
+ * when the service mounts, re-derives on every list change, and reports "no
+ * current Session" again when the service goes away.
+ * @param ctx - client root context.
+ * @returns the observable the rows subscribe to for their current marker.
+ */
+function currentSessionSource(ctx: ClientContext): ObservableSnapshot<string | undefined> {
+  const store = createSnapshotStore<string | undefined>(undefined)
+  ctx.inject(['sessions'], (scope) => {
+    // Dynamic service key: the Session Controller's type merge is available
+    // through the type-only import above, but this package reads two fields.
+    const list = (scope.get('sessions') as { list?: SessionListSource } | undefined)?.list
+    if (list === undefined) return
+    const sync = (): void => { store.set(mainSessionId(list.getSnapshot())) }
+    sync()
+    scope.effect(() => {
+      const unsubscribe = list.subscribe(sync)
+      return () => {
+        unsubscribe()
+        store.set(undefined)
+      }
+    }, 'ui-sidebar: current session')
+  })
+  // Arrow wrappers, not the store's own methods: the source outlives this
+  // call and must not depend on a receiver.
+  return { getSnapshot: () => store.getSnapshot(), subscribe: listener => store.subscribe(listener) }
 }
 
 /** Services required by the sidebar plugin. */
@@ -169,6 +208,10 @@ export function apply(ctx: ClientContext): void {
       // 失败是一个值（state/error），随后重读 tree 就能看到原因；这里不抛。
       await controlPlane.reconnect({ instanceId })
     },
+    // 行点击直接交给 Workspace UI：键是 `<instanceId>:<localSessionId>`，
+    // 由网关的联邦路由拆分，控制面侧不做任何前缀处理。
+    openSession: (key) => { workspaceNavigation.openSession(key) },
+    currentSession: currentSessionSource(ctx),
   })))
   // macOS desktop hides the collapsed sidebar entirely, so the open/New
   // Session controls move into the frame's window-chrome seat beside the

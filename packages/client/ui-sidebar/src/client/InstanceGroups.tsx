@@ -17,10 +17,19 @@
  * the Workspace browser's own render seats and controllers as props (see the
  * notes on `ProjectRowItem` / `SessionNodeItem` in its `rows/Rows.tsx`), which
  * a control-plane Client does not compose.
+ *
+ * A session row is the one interactive row of the tree: activating it opens
+ * that federated Session in the main column (`openSession`), and the row of the
+ * Session the main view currently shows carries the current marker. Rows are
+ * native buttons, not tree items: this section is not a tree widget (its
+ * headers and rows are plain stacked rows, each folding or navigating on its
+ * own), so `button` + `aria-current` keeps the ARIA self-consistent without
+ * inventing a roving-tabindex tree around markup that does not nest as one.
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import {
   IconFolderCloseRegular, IconFolderOpenRegular, IconTriangleRightFillRegular,
   relativeTime, StateDot,
@@ -76,7 +85,7 @@ export interface InstanceGroupView {
   readonly workspaces: readonly InstanceWorkspaceView[]
 }
 
-/** Remote calls this section makes. */
+/** Remote calls this section makes, plus the local navigation its rows drive. */
 export interface InstanceGroupsReaders {
   /** Reads the composed instance → workspace → session tree. */
   readonly fetchTree: () => Promise<readonly InstanceGroupView[]>
@@ -85,12 +94,63 @@ export interface InstanceGroupsReaders {
    * attempt settled; the caller re-reads the tree for the outcome.
    */
   readonly retry: (instanceId: string) => Promise<void>
+  /**
+   * Opens one Session by its complete federated key
+   * (`<instanceId>:<localSessionId>`). The section never splits the key: the
+   * prefix decides routing, and only the owner knows how to interpret it.
+   *
+   * Optional only so the section stays renderable without a navigation
+   * service (isolated fixtures); a composed control-plane Client always wires
+   * it, which is the only composition that renders rows at all.
+   */
+  readonly openSession?: ((key: string) => void) | undefined
+  /**
+   * The Session the main view currently shows. The section subscribes with
+   * `useSyncExternalStore`, so the current-row marker follows navigation
+   * immediately instead of waiting for the next tree poll.
+   */
+  readonly currentSession?: ObservableSnapshot<string | undefined> | undefined
 }
 
 /** Props of the rendered section. */
 export interface InstanceGroupsProps extends InstanceGroupsReaders {
   /** Poll period in milliseconds. */
   readonly intervalMs?: number
+}
+
+/**
+ * The slice of the Session list the current-Session derivation reads. ui-sidebar
+ * does not depend on the Session Controller package, and the derivation is two
+ * fields wide, so the shape is named here instead of imported.
+ */
+export interface SessionListLike {
+  readonly byId: Readonly<Record<string, {
+    readonly id: string
+    readonly retainedBy: { readonly mainView?: number | undefined }
+  }>>
+}
+
+/**
+ * The Session list as the section reads it: the current-Session snapshot plus
+ * its subscription. Named here so the wiring site can hold the two-field face
+ * without importing the Session Controller package.
+ */
+export interface SessionListSource {
+  getSnapshot(): SessionListLike
+  subscribe(listener: () => void): () => void
+}
+
+/**
+ * The Session the main view currently shows, derived exactly as the Workspace
+ * browser derives it (`retainedBy.mainView > 0`), so both surfaces agree on
+ * which Session is "current" — including a federated key, which the Session
+ * Controller projects into the same list under its complete key.
+ * @param list - current Session list state.
+ * @returns the main-view Session id, or undefined when nothing is retained.
+ */
+export function mainSessionId(list: SessionListLike): string | undefined {
+  return Object.values(list.byId)
+    .find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
 }
 
 /** In-memory disclosure state; polling frames never touch it. */
@@ -207,11 +267,16 @@ function timeLabel(at: number, now: number, t: TranslateNS<'sidebar'>): string {
   return unit === 'now' ? t('time.now') : t(`time.${unit}`, { n })
 }
 
+/** No-op subscription: the stable stand-in while no current-Session source is wired. */
+function subscribeNothing(): () => void {
+  return () => {}
+}
+
 /**
  * Slot component the sidebar registers into `sidebar.instances`. The readers
  * are closed over, so the shell supplies only the standard locale seat and its
  * column state.
- * @param readers - tree read and the per-instance retry.
+ * @param readers - tree read, per-instance retry, and the Session navigation the rows drive.
  * @returns the slot component.
  */
 export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
@@ -234,13 +299,25 @@ export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
  * @returns the instance section, or nothing while there is neither a frame nor a control plane.
  */
 export function InstanceGroups({
-  fetchTree, retry, intervalMs = 6000, t,
+  fetchTree, retry, openSession, currentSession, intervalMs = 6000, t,
 }: InstanceGroupsProps & { t: TranslateNS<'sidebar'> }) {
   const [groups, setGroups] = useState<readonly InstanceGroupView[]>()
   // Instance ids whose retry is still running: the button shows progress and
   // refuses a second click until the attempt settles.
   const [retrying, setRetrying] = useState<readonly string[]>([])
+  // Last refused open: a row that cannot be opened says so instead of failing
+  // silently, and the next accepted open clears the line.
+  const [openFailure, setOpenFailure] = useState<string>()
   const disclosureState = useDisclosureState()
+  // One subscribed source for the whole section: the readers hand in the same
+  // observable every render, so the pair below is stable and the store is read
+  // once per commit rather than once per row.
+  const subscribeCurrent = useCallback(
+    (onStoreChange: () => void): (() => void) => currentSession?.subscribe(onStoreChange) ?? subscribeNothing(),
+    [currentSession],
+  )
+  const readCurrent = useCallback((): string | undefined => currentSession?.getSnapshot(), [currentSession])
+  const currentId = useSyncExternalStore(subscribeCurrent, readCurrent, readCurrent)
   // Latest readers: the poll reads through this ref, so a caller that hands in
   // fresh closures every render cannot restart (or multiply) the timer.
   const readers = useRef({ fetchTree, retry })
@@ -299,6 +376,24 @@ export function InstanceGroups({
     })()
   }
 
+  /**
+   * Open one federated Session from its row. The key goes to the Workspace UI
+   * whole: it is the routing prefix plus the owner-local id, and only the
+   * Gateway's federation router may split it. A refused open (an instance that
+   * went offline between the poll and the click) is reported under the tree; it
+   * must never take the sidebar down with it.
+   * @param key - complete federated Session key of the activated row.
+   */
+  const open = (key: string): void => {
+    if (openSession === undefined) return
+    try {
+      openSession(key)
+      if (openFailure !== undefined) setOpenFailure(undefined)
+    } catch (error: unknown) {
+      setOpenFailure(errorText(error instanceof Error ? error.message : String(error)))
+    }
+  }
+
   if (groups === undefined || groups.length === 0) return null
   const now = Date.now()
 
@@ -354,18 +449,31 @@ export function InstanceGroups({
             {expanded && group.state === 'connected' && group.workspaces.length === 0 && (
               <div className={css.empty}>{t('instances.empty')}</div>
             )}
-            {expanded && group.workspaces.map(workspace => (
+            {/* Rows exist only under a reachable instance: a stale frame that
+                still carried workspaces for a now-unreachable instance must not
+                leave clickable rows behind. A connecting instance keeps the
+                rows its frame carried — it is on its way, not gone. */}
+            {expanded && group.state !== 'unreachable' && group.workspaces.map(workspace => (
               <WorkspaceGroup
                 key={workspace.key}
                 workspace={workspace}
                 state={disclosureState}
                 now={now}
+                current={currentId}
+                onOpen={open}
                 t={t}
               />
             ))}
           </div>
         )
       })}
+      {/* A refused open keeps the tree intact and names the failure where the
+          user acted; the accessibility hint is announced, not only painted. */}
+      {openFailure !== undefined && (
+        <p className={css.openFailure} role="alert" data-open-failure="">
+          {t('instances.openFailed', { message: openFailure })}
+        </p>
+      )}
     </section>
   )
 }
@@ -409,13 +517,17 @@ function InstanceOffline({ group, retrying, onRetry, t }: {
  * @param props.workspace - workspace node.
  * @param props.state - disclosure snapshot.
  * @param props.now - epoch ms for relative times.
+ * @param props.current - federated key of the Session the main view shows.
+ * @param props.onOpen - opens one row's Session by its complete federated key.
  * @param props.t - sidebar dictionary.
  * @returns the workspace block.
  */
-function WorkspaceGroup({ workspace, state, now, t }: {
+function WorkspaceGroup({ workspace, state, now, current, onOpen, t }: {
   workspace: InstanceWorkspaceView
   state: DisclosureState
   now: number
+  current: string | undefined
+  onOpen: (key: string) => void
   t: TranslateNS<'sidebar'>
 }) {
   const expanded = !state.collapsedWorkspaces.includes(workspace.key)
@@ -448,20 +560,40 @@ function WorkspaceGroup({ workspace, state, now, t }: {
         <span className={css.title}>{workspace.path}</span>
         <span className={css.count}>{workspace.sessions.length}</span>
       </button>
-      {expanded && sessions.map(session => (
-        <div
-          key={session.key}
-          className={css.sessionRow}
-          data-session-key={session.key}
-          title={session.key}
-        >
-          <span className={css.slot}>
-            <StateDot state={session.running ? 'ongoing' : 'idle'} />
-          </span>
-          <span className={css.title}>{sessionTitle(session)}</span>
-          <span className={css.time}>{timeLabel(session.updatedAt, now, t)}</span>
-        </div>
-      ))}
+      {expanded && sessions.map((session) => {
+        const title = sessionTitle(session)
+        const selected = session.key === current
+        return (
+          <button
+            key={session.key}
+            type="button"
+            className={clsx(css.sessionRow, selected && css.sessionRowCurrent)}
+            data-session-key={session.key}
+            // The visible row is a title and a timestamp; the accessible name
+            // is the action it performs, so the timestamp is not read as part
+            // of the Session's name.
+            aria-label={t('instances.session.open', { name: title })}
+            aria-current={selected ? 'true' : undefined}
+            title={session.key}
+            onClick={() => { onOpen(session.key) }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              // Consume the press before deciding: a modified chord is not this
+              // row's command, and the native activation must not fire for it.
+              event.preventDefault()
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+              onOpen(session.key)
+            }}
+          >
+            <span className={css.slot}>
+              <StateDot state={session.running ? 'ongoing' : 'idle'} />
+            </span>
+            <span className={css.title}>{title}</span>
+            <span className={css.time}>{timeLabel(session.updatedAt, now, t)}</span>
+          </button>
+        )
+      })}
       {expanded && workspace.sessions.length > WATERMARK_BASE && (
         <button
           type="button"

@@ -65,15 +65,21 @@
 }
 
 /* Session rows keep the same metrics as the official session row, one indent
-   step in (`--dsh-workspace-indent`, set on the group). Nothing here is
-   clickable yet: S3 owns opening a federated session, so the cursor stays a
-   plain arrow and no click handler is attached. */
+   step in (`--dsh-workspace-indent`, set on the group), and carry that row's
+   affordance: `cursor: pointer`, the hover fill, the official selected fill
+   (`.sessionRow.selected` in ui-workspace's `Rows.module.css`), and the same
+   focus ring the folding rows above use. It is a native button, so the browser
+   supplies activation semantics; only the modifier rule for Enter/Space is
+   ours. */
 .sessionRow {
   display: flex;
   align-items: center;
   gap: var(--dsh-sidebar-label-gap);
+  width: 100%;
   height: 32px;
+  margin: 0;
   box-sizing: border-box;
+  border: none;
   border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
   border-radius: var(--dsw-radius-md);
   background: transparent;
@@ -83,8 +89,17 @@
     var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
   );
   color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* The Session the main view shows: the official selected-row fill, so the
+   control-plane tree and an ordinary dsh read the same. */
+.sessionRowCurrent {
+  background-color: var(--dsw-alias-interactive-bg-hover);
 }
 
 @media (hover: hover) {
@@ -96,7 +111,8 @@
 }
 
 .groupHeader:focus-visible,
-.workspaceRow:focus-visible {
+.workspaceRow:focus-visible,
+.sessionRow:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: -2px;
 }
@@ -254,6 +270,15 @@
     var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
   );
   color: var(--dsw-alias-label-tertiary);
+  line-height: 20px;
+}
+
+/* A refused open (the instance went offline between the poll and the click)
+   sits under the tree in the error ink, aligned with the rows it concerns. */
+.openFailure {
+  margin: 4px 0 0;
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  color: var(--dsw-alias-state-error-primary);
   line-height: 20px;
 }
 
