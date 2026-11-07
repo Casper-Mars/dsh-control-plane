@@ -1,7 +1,7 @@
 # Short names for the Web and Desktop application commands. The package.json
 # scripts they call stay the source of truth; docs/development.md documents both.
 .DEFAULT_GOAL := help
-.PHONY: help build clean web desktop dev-web dev-desktop local proxy control-plane
+.PHONY: help build clean web desktop dev-web dev-desktop local control-plane
 
 PNPM ?= pnpm
 ARGS ?=
@@ -17,7 +17,6 @@ help:
 	@echo "the Web commands accept dsh web flags, the Desktop launcher accepts none."
 	@echo "make local       起 Web UI（隔离 DSH_HOME=./.devhome，默认端口 3099）"
 	@echo "PORT=3098 make local  换端口"
-	@echo "make proxy        起控制面骨架（control-plane/control-plane.json）"
 	@echo "make control-plane  起控制面 Host（bundle + 实例叠加层）"
 
 build:
@@ -45,10 +44,6 @@ DSH_HOME_DIR := $(CURDIR)/.devhome
 
 local:
 	DSH_HOME=$(DSH_HOME_DIR) $(PNPM) dsh --profile web --no-open --port $(PORT)
-
-# 控制面骨架（里程碑 1）：统一入口 + 多实例前缀路由
-proxy:
-	node control-plane/server.mjs --config control-plane/control-plane.json
 
 # 控制面开发态：装 bundle + 生成 instances 叠加层 + 起服务
 control-plane:

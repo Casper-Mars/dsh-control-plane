@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 起一个「控制面」Host（开发态）：
-#   1. 把 control-plane-bundle 通过官方 `dsh plugin add` 装进隔离 profile
+#   1. 把控制面 bundle（就是插件包本身）通过官方 `dsh plugin add` 装进隔离 profile
 #   2. 用 instances 配置生成一份 --patch 覆盖，不动 profile 的 cordis.patch.yml
 #   3. 起 dsh web
 #
@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DSH_HOME="${DSH_HOME:-$ROOT/.devhome-cp}"
 PORT="${PORT:-3095}"
 INSTANCES_FILE="${INSTANCES_FILE:-$ROOT/control-plane/control-plane.json}"
-BUNDLE="$ROOT/packages/control/control-plane-bundle"
+BUNDLE="$ROOT/packages/control/control-plane"
 
 [ -f "$INSTANCES_FILE" ] || {
   echo "缺少实例配置：$INSTANCES_FILE" >&2
@@ -26,6 +26,9 @@ export DSH_HOME
 mkdir -p "$DSH_HOME"
 
 # 1) 挂载 bundle（官方路径：写依赖 + 追加到 dsh.profile.bundles，幂等）
+#    控制面插件包自己声明 dsh.bundle，所以它同时是 bundle 和插件，不再有独立的挂载壳。
+#    旧版把壳放在 control-plane-bundle，这里顺手清掉历史 profile 里的残留依赖。
+pnpm dsh plugin --profile web remove @deepseek-ai/dsh-control-plane-bundle >/dev/null 2>&1 || true
 pnpm dsh plugin --profile web add "link:$BUNDLE" >/dev/null
 
 # 2) instances 只作为叠加层，保留 profile 自己的 cordis.patch.yml

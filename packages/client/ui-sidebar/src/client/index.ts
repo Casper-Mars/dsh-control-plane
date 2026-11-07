@@ -108,15 +108,26 @@ export function apply(ctx: ClientContext): void {
     }, SidebarRoot)
   })
   // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在。
-  const controlPlane = (ctx.remote as unknown as {
-    controlPlane?: { tree: () => Promise<readonly InstanceGroupView[]> }
-  }).controlPlane
-  if (controlPlane !== undefined) {
-    ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
-      name: 'sidebar.instances',
-      locale: NS,
-    }, instanceGroupsSlot(() => controlPlane.tree())))
-  }
+  //
+  // 两点容易踩：
+  // 1. Remote 命名空间是独立的 Cordis 服务（键 `remote.<namespace>`），不是
+  //    `remote` 对象的属性；用 `ctx.remote` 还会因为没声明 inject 'remote' 直接抛
+  //    "cannot get property \"remote\" without inject"。所以按服务键用 `ctx.get`。
+  // 2. 生成的 Remote 方法返回 RemoteResult 信封 `{ ok, value }`，需要自己解包。
+  ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
+    name: 'sidebar.instances',
+    locale: NS,
+  }, instanceGroupsSlot(async () => {
+    const controlPlane = ctx.get('remote.controlPlane') as unknown as {
+      tree: () => Promise<
+        | { ok: true; value: readonly InstanceGroupView[] }
+        | { ok: false; error: unknown }
+      >
+    } | undefined
+    if (controlPlane === undefined) return []
+    const result = await controlPlane.tree()
+    return result.ok ? result.value : []
+  })))
   // macOS desktop hides the collapsed sidebar entirely, so the open/New
   // Session controls move into the frame's window-chrome seat beside the
   // traffic lights; the occupant reuses the shell's injected actions, and

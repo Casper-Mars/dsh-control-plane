@@ -42,9 +42,6 @@ importers:
       '@deepseek-ai/dsh-control-plane':
         specifier: workspace:*
         version: link:packages/control/control-plane
-      '@deepseek-ai/dsh-control-plane-bundle':
-        specifier: workspace:*
-        version: link:packages/control/control-plane-bundle
       '@deepseek-ai/dsh-cua':
         specifier: workspace:*
         version: link:packages/experimental/cua
@@ -7752,12 +7749,6 @@ importers:
       '@deepseek-ai/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
-
-  packages/control/control-plane-bundle:
-    dependencies:
-      '@deepseek-ai/dsh-control-plane':
-        specifier: workspace:*
-        version: link:../control-plane
 
   packages/core/agent:
     dependencies:

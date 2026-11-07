@@ -4,6 +4,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": ["./cordis.patch.yml"]
+    }
+  },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
@@ -45,6 +50,7 @@
     "@deepseek-ai/cordis": "workspace:~"
   },
   "files": [
+    "cordis.patch.yml",
     "lib/index.js",
     "lib/typert.host.js",
     "lib/typert.host.d.ts",

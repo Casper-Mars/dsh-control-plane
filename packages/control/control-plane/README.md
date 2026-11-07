@@ -98,8 +98,9 @@ Dev Agent(dev)  [0 会话, 0 进行中]
 但构造器从不执行（表现为 `include:<id>`）。普通插件必须由一个 bundle 的
 `cordis.patch.yml` 插入——这也是 dsh 自己所有插件的形态。
 
-本仓库的 bundle：`packages/control/control-plane-bundle`（只有 `package.json` +
-`cordis.patch.yml`），它插入 `control-plane` 插件行。
+**本包自己就是 bundle**：`package.json` 声明 `dsh.bundle.patch`，根目录的
+`cordis.patch.yml` 插入 `control-plane` 插件行（name 指向本包）。所以仓库里没有独立的
+挂载壳包——一个目录同时是插件源码和 bundle 层。
 
 ### 一条命令
 
@@ -110,7 +111,7 @@ make control-plane          # 默认 3095，PORT=3100 可改
 
 脚本做的事（`scripts/control-plane-dev.sh`）：
 
-1. `dsh plugin add link:<bundle>` —— 官方挂载：写 profile 依赖 + 追加到 `dsh.profile.bundles`
+1. `dsh plugin add link:<本包>` —— 官方挂载：写 profile 依赖 + 追加到 `dsh.profile.bundles`
 2. 把 `instances` 生成为 `--patch` 叠加层（不改 profile 的 `cordis.patch.yml`）
 3. 起 `dsh web`
 
