@@ -26,6 +26,7 @@ import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionTarget } from '../contract/sessions.ts'
+import { isFederatedSessionId } from '../federation.ts'
 
 function sessionSeqCursor(value: number): SessionSeqCursor {
   return value === -1 ? -1 : SessionSeq(value)
@@ -134,7 +135,13 @@ export class SessionManager {
 
   /**
    * Resolve an acquisition target without materializing a Session.
-   * @param target - known identity or durable direct-parent address.
+   *
+   * A federated key (`<instanceId>:<localSessionId>`) passes the local catalog
+   * guard without evidence: the owning instance holds its Session and its
+   * catalog, so local absence is expected rather than an unknown id. The key
+   * stays untouched — the Gateway's federation router splits the prefix and
+   * forwards every Session RPC to that instance.
+   * @param target - known identity, durable direct-parent address, or federated key.
    * @returns the resolved identity with its explicit or catalog-derived history route installed.
    */
   resolveTarget(target: SessionTarget): SessionId {
@@ -143,7 +150,8 @@ export class SessionManager {
     if (typeof target === 'string'
       && !this.sessions.has(id)
       && !this.summaries.some(summary => summary.sessionId === id)
-      && address === undefined) {
+      && address === undefined
+      && !isFederatedSessionId(id)) {
       throw new Error(`sessions.retain: unknown session ${id}`)
     }
     if (address !== undefined) this.addresses.set(id, address)

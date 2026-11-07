@@ -18,11 +18,18 @@ import type { SessionReferenceSource } from '../index.ts'
 
 export type { AgentContext } from '../scope.ts'
 
-/** Known Session identity or durable direct-parent subagent address; an address owns no lifetime. */
+/**
+ * Known Session identity, durable direct-parent subagent address, or an
+ * instance-qualified federated key (`<instanceId>:<localSessionId>`); an
+ * address owns no lifetime. A federated key is opaque to the Client: it needs
+ * no local catalog row, is forwarded unchanged to every Session RPC, and the
+ * Gateway's federation router delivers those calls to the owning instance.
+ */
 export type SessionTarget = SessionId | SubagentAddress
 
 /** One independent use of an exact Client generation, without Host Agent ownership. */
 export interface SessionReference extends Disposable {
+  /** The retained identity, exactly as requested (a federated key keeps its prefix). */
   readonly sessionId: SessionId
   /** Shared binding; access fails after reference release or generation disposal. */
   readonly binding: SessionBinding
@@ -51,7 +58,9 @@ export interface ISessions {
   readonly list: ObservableSnapshot<SessionListState>
   /**
    * Retain an exact Client generation and start its shared initial history opening.
-   * @param target - known identity or durable direct-parent address.
+   * A federated key is retained without a local catalog row; it stays opaque and
+   * every resulting Session RPC carries the full key.
+   * @param target - known identity, durable direct-parent address, or federated key.
    * @param options - required consumer source and optional independent waiter cancellation.
    * @returns an owned reference immediately; await `reference.ready` when the initial open attempt must settle first.
    */

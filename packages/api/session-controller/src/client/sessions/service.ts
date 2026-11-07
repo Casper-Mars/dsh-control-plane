@@ -17,6 +17,7 @@ import type {
 } from '../contract/sessions.ts'
 import type { SessionReferenceSource } from '../index.ts'
 import { createScope, scopeIdentityOf, scopeOf as scopeTagOf } from '../scope.ts'
+import { isFederatedSessionId } from '../federation.ts'
 import { SessionManager } from './manager.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionListPhase, SessionSearchResultItem, SessionProjectionSnapshot } from './manager.ts'
@@ -577,7 +578,8 @@ export class ClientSessions implements ISessions {
       if (count === 0) this.retireScope(id, record)
       else this.publishRetention(id)
     })
-    if (this.list.getSnapshot().byId[id] === undefined && this.manager.subagentAddress(id) !== undefined) {
+    if (this.list.getSnapshot().byId[id] === undefined
+      && (this.manager.subagentAddress(id) !== undefined || isFederatedSessionId(id))) {
       this.projectList()
     }
     this.publishRetention(id)
@@ -690,7 +692,12 @@ export class ClientSessions implements ISessions {
     for (const [id, record] of this.scopes) {
       if (byId[id] !== undefined) continue
       const address = this.manager.subagentAddress(id)
-      if (address === undefined) continue
+      // A federated scope has no local catalog row — its catalog lives on the
+      // owning instance — yet shell consumers resolve the main Session through
+      // this projection. The retained-identity row below (the shape subagent
+      // fallbacks already use) carries only facts this Client owns.
+      const federated = address === undefined && isFederatedSessionId(id)
+      if (address === undefined && !federated) continue
       const previous = previousById[id]
       const snapshot = record.session.getSnapshot()
       const projectionValues = this.manager.projectionValues(id)
@@ -700,9 +707,13 @@ export class ClientSessions implements ISessions {
         ...(previous ?? { id, displayTitle: id, updatedAt: 0 }),
         running: snapshot.running,
         retainedBy: record.retention.retainedBy,
-        blank: snapshot.blank,
-        parentId: address.parentSessionId,
-        origin: 'subagent',
+        // A federated identity is never a locally reusable blank (its real
+        // blankness is remote-owned); the Conversation reads the Session
+        // snapshot, not this row.
+        blank: federated ? false : snapshot.blank,
+        ...(address === undefined
+          ? {}
+          : { parentId: address.parentSessionId, origin: 'subagent' as const }),
         ...(projectionValues === undefined ? {} : { projectionValues }),
         ...(title === undefined ? {} : { title, displayTitle: title }),
       }

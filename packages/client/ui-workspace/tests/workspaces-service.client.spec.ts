@@ -1066,6 +1066,29 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.create).not.toHaveBeenCalled()
   })
 
+  it('opens and persists a federated key with no local catalog row', () => {
+    const backing = persistSelection({})
+    const b = bench()
+
+    b.uiWorkspace.openSession(sid('alpha:s-1'))
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('alpha:s-1'), { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(JSON.parse(backing.get('dsh.sessions.current')!)).toEqual({ sessionId: sid('alpha:s-1') })
+  })
+
+  it('restores a saved federated key instead of replacing it with a local Session', () => {
+    const backing = persistSelection({ sessionId: sid('alpha:s-1') })
+    const b = bench({
+      sessions: sessionState(),
+      workspaces: workspaceState([workspace('a')]),
+    })
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('alpha:s-1'), { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(JSON.parse(backing.get('dsh.sessions.current')!)).toEqual({ sessionId: sid('alpha:s-1') })
+  })
+
   it('reclaims the saved blank before opening history, even when another blank is listed first', async () => {
     persistSelection({ sessionId: sid('saved') })
     const acquired = Promise.withResolvers<SessionId>()

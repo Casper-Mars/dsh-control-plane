@@ -3,13 +3,14 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 import type { AccessEffect, RemoteEndpoint } from '@deepseek-ai/dsh-api-remote-access/client'
 import type { ClientRemote, DirectoryListing, RemoteFailure } from '@deepseek-ai/dsh-api-remotes/client'
-import type {
-  ISessions,
-  SessionCreateError,
-  SessionBinding,
-  SessionReference,
-  SessionTarget,
-  SessionListState,
+import {
+  isFederatedSessionId,
+  type ISessions,
+  type SessionCreateError,
+  type SessionBinding,
+  type SessionReference,
+  type SessionTarget,
+  type SessionListState,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the `agentPreset` Session projection value into this program.
 import type {} from '@deepseek-ai/dsh-agent-preset-registry/types'
@@ -40,7 +41,9 @@ export interface StartSessionOptions extends DraftInitializationOptions {
 export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.
-   * @param target - known Session identity or durable direct-parent subagent address to display.
+   * @param target - known Session identity, durable direct-parent subagent address,
+   * or an instance-qualified federated key (`<instanceId>:<localSessionId>`), which
+   * needs no local catalog row and is forwarded opaquely.
    */
   openSession(target: SessionTarget): void
   /**
@@ -466,6 +469,13 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const saved = this.selection.getSnapshot()
     if (saved.subagentAddress !== undefined) {
       this.replaceMain(saved.subagentAddress, this.lifetime.signal, 'preserve')
+      return
+    }
+    // A federated key has no local catalog row by design — its catalog lives on
+    // the owning instance — so a missing `byId` entry is not evidence that the
+    // saved selection disappeared. Restore it as saved and let the Gateway route.
+    if (saved.sessionId !== undefined && isFederatedSessionId(saved.sessionId)) {
+      this.replaceMain(saved.sessionId, this.lifetime.signal, 'preserve')
       return
     }
     const summary = saved.sessionId === undefined ? undefined : sessions.byId[saved.sessionId]
