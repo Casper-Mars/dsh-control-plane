@@ -84,6 +84,8 @@ export function apply(ctx: ClientContext): void {
     selectPanel: (id) => { ctx.layout.selectPanel(id) },
     setPinned: panelPins.setPinned,
     trackEntryClick: (attributes) => { ctx.get('productAnalytics')?.track('sidebar_menu_click', attributes) },
+    // 控制面组合下宿主不承担 agent 职责：隐藏"新建会话"和本地工作区浏览器。
+    controlPlane: ctx.get('remote.controlPlane') !== undefined,
     hooks: { panels, shortcuts: ctx.shortcuts.catalog, entryPins: panelPins.unpinned, entryActions },
   })
   ctx.slots.inject('sidebar', function* () {

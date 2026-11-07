@@ -157,6 +157,7 @@ export function SidebarRoot({
   selectPanel,
   setPinned,
   trackEntryClick,
+  controlPlane,
   useRemoteAccess,
   usePanels,
   useEntryPins,
@@ -174,7 +175,9 @@ export function SidebarRoot({
   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
   // A page whose access snapshot excludes starting a Session offers no New Session affordance.
-  const canStartSession = useRemoteAccess('session/create')
+  // A control-plane Host owns no agent: no New Session affordance even though
+  // the profile technically still exposes session/create.
+  const canStartSession = useRemoteAccess('session/create') && !controlPlane
   const toggleLabel = collapsed ? t('toggle.open') : t('toggle.collapse')
   // Wide content stays mounted while the collapse animates (fading via
   // .collapsed .wide), unmounts at settle, and remounts right away on expand.
@@ -423,7 +426,7 @@ export function SidebarRoot({
           )}
           <div className={css.regionArea}>
             {renderSlot('sidebar.instances', {})}
-            {renderSlot('sidebar.workspaces', {
+            {!controlPlane && renderSlot('sidebar.workspaces', {
               wide,
               expandSidebar: () => { if (collapsed) toggleSidebar() },
             }, { hookContext: sectionHookContext })}

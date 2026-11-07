@@ -215,6 +215,12 @@ export type SidebarRootInjected = {
   setPinned: (id: string, pinned: boolean) => void
   /** Record activation of an official navigation control without changing navigation. */
   trackEntryClick: (attributes: ProductEventMap['sidebar_menu_click']) => void
+  /**
+   * True when this Client is composed as a control plane. The Host owns no
+   * agent of its own, so New Session and the local Workspace browser are
+   * meaningless; navigation comes from `sidebar.instances` instead.
+   */
+  controlPlane: boolean
   /** Private reactive sources bound to framework selector hooks. */
   hooks: {
     panels: ObservableSnapshot<readonly SidebarPanelMetadata[]>
