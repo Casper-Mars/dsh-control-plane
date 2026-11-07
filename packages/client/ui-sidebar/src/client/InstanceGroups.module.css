@@ -193,6 +193,70 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Offline notice: an unreachable instance keeps its 32px row rhythm, shows the
+   last failure in the error ink (elided, with the full text on `title`), and
+   puts the retry control on the trailing edge. Connected-but-empty instances
+   use the quiet `.empty` line instead, so the two states never look alike. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-sidebar-label-gap);
+  min-height: 32px;
+  box-sizing: border-box;
+  border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  padding-inline-start: calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
+  );
+}
+
+.error {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-state-error-primary);
+  line-height: 20px;
+}
+
+.retry {
+  flex: none;
+  height: 24px;
+  margin: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  padding: 0 var(--dsh-sidebar-label-gap);
+  background: transparent;
+  color: var(--dsw-alias-state-business-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.retry:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .retry:not(:disabled):hover {
+    background-color: var(--dsw-alias-interactive-bg-hover);
+  }
+}
+
+.retry:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.empty {
+  padding-inline-start: calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
+  );
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 20px;
+}
+
 /* "Show more"/"Show less": the official overflow control's 28px row and
    padding formula, which lands its text on the session titles' left edge.
    The official control sets 12px here; this section inherits the row size

@@ -8,7 +8,7 @@
  * — the runtime gate that either keeps `projections.values.title` on the wire
  * or strips it before the control plane ever sees it.
  *
- * Nothing here reuses the developer's `session-row.client.spec.ts` fixtures;
+ * Nothing here reuses the developer's `session-row.spec.ts` fixtures;
  * this file only drives the exported seams.
  */
 import { readFileSync } from 'node:fs'
@@ -35,7 +35,7 @@ function raw(overrides: Partial<RawSummary> = {}): RawSummary {
 }
 
 /** One title projection block, in the shape the wire block arrives. */
-function hints(title: unknown): RawSummary['projections'] {
+function hints(title: unknown): NonNullable<RawSummary['projections']> {
   return { values: { title } }
 }
 
@@ -194,10 +194,10 @@ interface TypertRemoteProduct {
   readonly spec: { readonly methods: Readonly<Record<string, TypertRemoteMethod>> }
 }
 
-const remote = remoteProduct as TypertRemoteProduct
+const remote = remoteProduct as unknown as TypertRemoteProduct
 
 /** This package's own artifact, i.e. the decode the browser's tree read uses. */
-const controlPlaneRemote = controlPlaneRemoteProduct as TypertRemoteProduct
+const controlPlaneRemote = controlPlaneRemoteProduct as unknown as TypertRemoteProduct
 
 /** The generated `session/list` result codec (the host's result encoder). */
 function listCodec(): TypertSchema {
@@ -298,6 +298,7 @@ describe('typert session/list decode keeps the title projection', () => {
     const decoded = method.result.create().parse([{
       instanceId: 'alpha',
       label: 'Alpha(alpha)',
+      state: 'connected',
       runningCount: 1,
       sessionCount: 1,
       workspaces: [{
@@ -310,12 +311,26 @@ describe('typert session/list decode keeps the title projection', () => {
           { key: 'alpha:s2', instanceId: 'alpha', sessionId: 's2', updatedAt: 2, running: false },
         ],
       }],
-    }]) as [{
-      workspaces: [{ sessions: { title?: string }[] }]
-    }]
+    }, {
+      // t100635: reachability crosses the same boundary, error included.
+      instanceId: 'beta',
+      label: 'Beta(beta)',
+      state: 'unreachable',
+      error: 'connect ECONNREFUSED',
+      runningCount: 0,
+      sessionCount: 0,
+      workspaces: [],
+    }]) as [
+      { state: string; workspaces: [{ sessions: { title?: string }[] }] },
+      { state: string; error?: string },
+    ]
     const sessions = decoded[0]?.workspaces[0]?.sessions ?? []
     expect(sessions[0]?.title).toBe(' Named ')
     expect(Object.hasOwn(sessions[1] ?? {}, 'title')).toBe(false)
+    // The sidebar now reads state from this frame, so it must survive decode.
+    expect(decoded[0]?.state).toBe('connected')
+    expect(decoded[1]?.state).toBe('unreachable')
+    expect(decoded[1]?.error).toBe('connect ECONNREFUSED')
   })
 
   it('the remote-client artifact declares title inside its session/list values object', () => {

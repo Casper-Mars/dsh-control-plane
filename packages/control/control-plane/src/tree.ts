@@ -10,9 +10,11 @@
  */
 
 import type { ResolvedInstance } from './config.ts'
-import type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './types.ts'
+import type {
+  InstanceNode, InstanceStateReport, SessionNode, SessionRow, UpstreamState, WorkspaceNode,
+} from './types.ts'
 
-export type { InstanceNode, SessionNode, SessionRow, WorkspaceNode } from './types.ts'
+export type { InstanceNode, InstanceStateReport, SessionNode, SessionRow, WorkspaceNode } from './types.ts'
 
 /** Separator between the instance id and the instance-local value. */
 const SEPARATOR = ':'
@@ -46,15 +48,23 @@ export function split(key: string): { instanceId: string; value: string } {
 /**
  * Compose the sidebar tree from per-instance session lists.
  * @param instances - configuration order; instances without sessions still appear.
- * @param sessionsByInstance - raw rows keyed by instance id.
+ * @param sessionsByInstance - raw rows keyed by instance id. An unreachable
+ *   instance has no entry: the caller must not fabricate an empty list, or the
+ *   sidebar cannot tell "offline" from "connected with no sessions".
+ * @param states - reachability per instance id; a missing entry means the
+ *   caller composed rows for an instance whose reachability it did not track,
+ *   which the tree reports as `connected`.
  * @returns instance nodes in configuration order, workspaces by path, sessions newest first.
  */
 export function buildTree(
   instances: readonly ResolvedInstance[],
   sessionsByInstance: ReadonlyMap<string, readonly SessionRow[]>,
+  states: Readonly<Record<string, InstanceStateReport>> = {},
 ): InstanceNode[] {
   return instances.map((instance) => {
     const rows = sessionsByInstance.get(instance.id) ?? []
+    const reported: InstanceStateReport | undefined = states[instance.id]
+    const state: UpstreamState = reported?.state ?? 'connected'
     const groups = new Map<string, SessionNode[]>()
 
     for (const row of rows) {
@@ -86,6 +96,8 @@ export function buildTree(
     return {
       instanceId: instance.id,
       label: `${instance.name}(${instance.id})`,
+      state,
+      ...(reported?.error === undefined ? {} : { error: reported.error }),
       workspaces,
       runningCount: rows.filter(row => row.running).length,
       sessionCount: rows.length,

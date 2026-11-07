@@ -55,12 +55,28 @@ export interface WorkspaceNode {
   readonly latestUpdatedAt: number
 }
 
+/** Reachability of one instance plus its last failure. */
+export interface InstanceStateReport {
+  readonly state: UpstreamState
+  /** Last failure when unreachable. */
+  readonly error?: string | undefined
+}
+
 /** One instance group in the sidebar. */
 export interface InstanceNode {
   readonly instanceId: string
   /** `name(id)`, the title the sidebar renders. */
   readonly label: string
-  /** Workspaces, ordered by path. */
+  /**
+   * Reachability at the moment this frame was composed. An unreachable
+   * instance still appears (configuration order), but carries no sessions, so
+   * the sidebar must read this field instead of treating `sessionCount === 0`
+   * as "connected and empty".
+   */
+  readonly state: UpstreamState
+  /** Last failure when {@link state} is `unreachable`. */
+  readonly error?: string | undefined
+  /** Workspaces, ordered by path. Empty while the instance is not connected. */
   readonly workspaces: readonly WorkspaceNode[]
   /** Sessions with a running turn in this instance. */
   readonly runningCount: number
@@ -76,6 +92,24 @@ export interface InstanceInfo {
   readonly label: string
   readonly state: UpstreamState
   /** Last failure when unreachable. */
+  readonly error?: string | undefined
+}
+
+/** Request of the `reconnect` Remote method. */
+export interface ReconnectRequest {
+  /** Configured instance id to reconnect. */
+  readonly instanceId: string
+}
+
+/**
+ * Value of the `reconnect` Remote method.
+ *
+ * A failed retry is a value, not a rejection: the sidebar has to show the
+ * failure reason on the group it just retried.
+ */
+export interface ReconnectValue {
+  readonly state: UpstreamState
+  /** Failure message when the retry did not reconnect. */
   readonly error?: string | undefined
 }
 

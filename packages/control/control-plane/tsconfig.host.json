@@ -8,6 +8,7 @@
   "files": [
     "src/index.ts",
     "src/config.ts",
+    "src/connections.ts",
     "src/tree.ts",
     "src/upstream.ts",
     "src/types.ts"

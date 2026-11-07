@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Control-plane instance groups: header contents, folding that survives the
- * poll, the "show more" control that replaces silent truncation, and the
- * keep-the-previous-frame rule for failed reads.
+ * Control-plane instance groups: header contents, the offline/empty split, the
+ * retry control, folding that survives the poll, the "show more" ladder that
+ * replaces silent truncation, and the keep-the-previous-frame rule for failed
+ * reads.
  *
+ * Reachability comes from the tree frame itself since S3-03, so every fixture
+ * carries `state` and the section no longer takes a second `instances` reader.
  * The section's first frame arrives from a promise, so every test settles the
  * microtask queue (inside `act`) before asserting.
  */
@@ -12,7 +15,7 @@ import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  InstanceGroups, instanceGroupsSlot, type InstanceGroupView, type InstanceInfoView, type InstanceSessionView,
+  InstanceGroups, instanceGroupsSlot, type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
 import { en } from '../src/client/locales.ts'
 
@@ -38,11 +41,19 @@ function session(instanceId: string, index: number, minutesAgo = index): Instanc
   }
 }
 
+/** Reachability overrides a group fixture may carry. */
+interface GroupOverrides {
+  readonly state?: InstanceGroupView['state']
+  readonly error?: string | undefined
+}
+
 /** One instance group with `count` sessions in one workspace. */
-function group(instanceId: string, count: number, path = '/workspace'): InstanceGroupView {
+function group(instanceId: string, count: number, path = '/workspace', overrides: GroupOverrides = {}): InstanceGroupView {
   return {
     instanceId,
     label: `${instanceId.toUpperCase()}(${instanceId})`,
+    state: overrides.state ?? 'connected',
+    ...(overrides.error === undefined ? {} : { error: overrides.error }),
     runningCount: count === 0 ? 0 : 1,
     sessionCount: count,
     workspaces: count === 0
@@ -56,19 +67,15 @@ function group(instanceId: string, count: number, path = '/workspace'): Instance
   }
 }
 
-/** Reachability frame for the same ids, all connected unless stated. */
-function reachability(ids: readonly string[], state: InstanceInfoView['state'] = 'connected'): readonly InstanceInfoView[] {
-  return ids.map(id => ({ id, label: `${id.toUpperCase()}(${id})`, state }))
+/** A `retry` reader that succeeds and records its calls. */
+function retrySpy(): ReturnType<typeof vi.fn<(instanceId: string) => Promise<void>>> {
+  return vi.fn<(instanceId: string) => Promise<void>>(async () => {})
 }
 
-describe('InstanceGroups', () => {
+describe('InstanceGroups header', () => {
   it('renders the instance name, a reachability dot and the session count', async () => {
     const { container } = render(
-      <InstanceGroups
-        fetchTree={async () => [group('cto', 3)]}
-        fetchInstances={async () => reachability(['cto'])}
-        t={t}
-      />,
+      <InstanceGroups fetchTree={async () => [group('cto', 3)]} retry={retrySpy()} t={t} />,
     )
     await settle()
     const header = screen.getByRole('button', { name: 'CTO(cto), Connected, 3 sessions' })
@@ -79,14 +86,201 @@ describe('InstanceGroups', () => {
     expect(screen.getByText('/workspace')).toBeTruthy()
     expect(screen.getAllByText(/^session-/)).toHaveLength(3)
     expect(screen.getByText('now')).toBeTruthy()
+    // A connected group never shows the offline notice or the empty line.
+    expect(container.querySelector('[data-instance-offline]')).toBeNull()
+    expect(screen.queryByText('No sessions')).toBeNull()
   })
 
+  it('renders the connecting state from the tree with a dash instead of a count', async () => {
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [group('ops', 0, '/workspace', { state: 'connecting' })]}
+        retry={retrySpy()}
+        t={t}
+      />,
+    )
+    await settle()
+    const header = screen.getByRole('button', { name: 'OPS(ops), Connecting, 0 sessions' })
+    expect(header.getAttribute('data-instance-state')).toBe('connecting')
+    expect(container.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(header.textContent).toBe('OPS(ops)—')
+    expect(container.querySelector('[data-instance-offline]')).toBeNull()
+  })
+})
+
+describe('InstanceGroups offline vs empty', () => {
+  it('shows the offline marker, the reason and a retry control instead of "0"', async () => {
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [group('down', 0, '/workspace', { state: 'unreachable', error: 'connect ECONNREFUSED' })]}
+        retry={retrySpy()}
+        t={t}
+      />,
+    )
+    await settle()
+    const header = screen.getByRole('button', { name: 'DOWN(down), Unreachable' })
+    expect(header.getAttribute('data-instance-state')).toBe('unreachable')
+    expect(container.querySelector('[data-state="error"]')).not.toBeNull()
+    // Never the connected-empty "0": the count cell says Offline.
+    expect(header.textContent).toBe('DOWN(down)Offline')
+    const notice = container.querySelector('[data-instance-offline="down"]') as HTMLElement
+    expect(notice.textContent).toContain('connect ECONNREFUSED')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    // The empty-instance copy belongs to the online case only.
+    expect(screen.queryByText('No sessions')).toBeNull()
+    expect(container.querySelectorAll('[data-session-key]')).toHaveLength(0)
+  })
+
+  it('falls back to the unreachable label when the control plane sent no reason', async () => {
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [group('mute', 0, '/workspace', { state: 'unreachable' })]}
+        retry={retrySpy()}
+        t={t}
+      />,
+    )
+    await settle()
+    const notice = container.querySelector('[data-instance-offline="mute"]') as HTMLElement
+    expect(notice.textContent).toContain('Unreachable')
+    expect(notice.textContent).toContain('Retry')
+  })
+
+  it('elides a long reason but keeps the full text on the title attribute', async () => {
+    const long = `boom ${'x'.repeat(300)}`
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [group('long', 0, '/workspace', { state: 'unreachable', error: long })]}
+        retry={retrySpy()}
+        t={t}
+      />,
+    )
+    await settle()
+    const error = container.querySelector('[data-instance-offline="long"] span') as HTMLElement
+    expect(error.textContent?.endsWith('…')).toBe(true)
+    expect(error.textContent?.length).toBe(160)
+    expect(error.getAttribute('title')).toBe(long)
+  })
+
+  it('shows "0" plus a quiet empty line for a connected instance with no sessions', async () => {
+    const { container } = render(
+      <InstanceGroups fetchTree={async () => [group('idle', 0)]} retry={retrySpy()} t={t} />,
+    )
+    await settle()
+    const header = screen.getByRole('button', { name: 'IDLE(idle), Connected, 0 sessions' })
+    expect(header.textContent).toBe('IDLE(idle)0')
+    expect(screen.getByText('No sessions')).toBeTruthy()
+    // No error, no retry: an empty instance is not a broken one.
+    expect(container.querySelector('[data-instance-offline]')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it('keeps the offline notice inside the disclosure, so folding hides it', async () => {
+    const { container } = render(
+      <InstanceGroups
+        fetchTree={async () => [group('folded', 0, '/workspace', { state: 'unreachable', error: 'down' })]}
+        retry={retrySpy()}
+        t={t}
+      />,
+    )
+    await settle()
+    expect(container.querySelector('[data-instance-offline="folded"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /FOLDED\(folded\)/ }))
+    expect(container.querySelector('[data-instance-offline="folded"]')).toBeNull()
+  })
+})
+
+describe('InstanceGroups retry', () => {
+  it('calls the retry reader and re-reads the tree for the outcome', async () => {
+    const retry = retrySpy()
+    const fetchTree = vi.fn(async () => [
+      group('again', 0, '/workspace', { state: 'unreachable' as const, error: 'down' }),
+    ])
+    render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await settle()
+    expect(retry).toHaveBeenCalledWith('again')
+    expect(fetchTree).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows progress and refuses a second click while the retry runs', async () => {
+    let resolveRetry: () => void = () => {}
+    const retry = vi.fn<(instanceId: string) => Promise<void>>(
+      async () => { await new Promise<void>((resolve) => { resolveRetry = resolve }) },
+    )
+    const fetchTree = vi.fn(async () => [
+      group('slow', 0, '/workspace', { state: 'unreachable' as const, error: 'down' }),
+    ])
+    render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    const busy = screen.getByRole('button', { name: 'Retrying' }) as HTMLButtonElement
+    expect(busy.disabled).toBe(true)
+    fireEvent.click(busy)
+    expect(retry).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveRetry()
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+    expect(fetchTree).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders the new reason when the retry fails', async () => {
+    let tree = group('flaky', 0, '/workspace', { state: 'unreachable' as const, error: 'first: refused' })
+    const fetchTree = vi.fn(async () => [tree])
+    const retry = vi.fn(async () => {
+      tree = group('flaky', 0, '/workspace', { state: 'unreachable' as const, error: 'second: timeout' })
+    })
+    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    expect(container.querySelector('[data-instance-offline="flaky"]')?.textContent).toContain('first: refused')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await settle()
+    expect(container.querySelector('[data-instance-offline="flaky"]')?.textContent).toContain('second: timeout')
+    expect(container.querySelector('[data-instance-offline="flaky"]')?.textContent).not.toContain('first: refused')
+  })
+
+  it('recovers to the connected rendering after a successful retry', async () => {
+    let tree = group('heal', 0, '/workspace', { state: 'unreachable' as const, error: 'down' })
+    const fetchTree = vi.fn(async () => [tree])
+    const retry = vi.fn(async () => { tree = group('heal', 2) })
+    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await settle()
+    expect(container.querySelector('[data-instance-offline="heal"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /HEAL\(heal\), Connected, 2 sessions/ })).toBeTruthy()
+    expect(container.querySelectorAll('[data-session-key]')).toHaveLength(2)
+  })
+
+  it('keeps the previous frame when the post-retry read fails', async () => {
+    let fail = false
+    const fetchTree = vi.fn(async () => {
+      if (fail) throw new Error('tree down')
+      return [group('stay', 0, '/workspace', { state: 'unreachable' as const, error: 'down' })]
+    })
+    const retry = vi.fn(async () => { fail = true })
+    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await settle()
+    expect(fetchTree).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[data-instance-offline="stay"]')?.textContent).toContain('down')
+    // The button is usable again even though the read failed.
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+})
+
+describe('InstanceGroups rows', () => {
   it('renders the reported session title instead of the id', async () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [{
           instanceId: 'titled',
           label: 'TITLED(titled)',
+          state: 'connected',
           runningCount: 0,
           sessionCount: 1,
           workspaces: [{
@@ -102,7 +296,7 @@ describe('InstanceGroups', () => {
             }],
           }],
         }]}
-        fetchInstances={async () => reachability(['titled'])}
+        retry={retrySpy()}
         t={t}
       />,
     )
@@ -120,6 +314,7 @@ describe('InstanceGroups', () => {
         fetchTree={async () => [{
           instanceId: 'untitled',
           label: 'UNTITLED(untitled)',
+          state: 'connected',
           runningCount: 0,
           sessionCount: 2,
           workspaces: [{
@@ -132,7 +327,7 @@ describe('InstanceGroups', () => {
             ],
           }],
         }]}
-        fetchInstances={async () => reachability(['untitled'])}
+        retry={retrySpy()}
         t={t}
       />,
     )
@@ -141,33 +336,10 @@ describe('InstanceGroups', () => {
     expect(screen.getByText('plain')).toBeTruthy()
   })
 
-  it('reports the two other reachability states through the same dot vocabulary', async () => {
-    const connecting = render(
-      <InstanceGroups
-        fetchTree={async () => [group('ops', 0)]}
-        fetchInstances={async () => reachability(['ops'], 'connecting')}
-        t={t}
-      />,
-    )
-    await settle()
-    expect(connecting.container.querySelector('[data-state="ongoing"]')).not.toBeNull()
-    cleanup()
-
-    const unreachable = render(
-      <InstanceGroups
-        fetchTree={async () => [group('ops', 0)]}
-        fetchInstances={async () => reachability(['ops'], 'unreachable')}
-        t={t}
-      />,
-    )
-    await settle()
-    expect(unreachable.container.querySelector('[data-state="error"]')).not.toBeNull()
-  })
-
   it('folds a group without the poll resetting it', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('lab', 2)])
-    render(<InstanceGroups fetchTree={fetchTree} fetchInstances={async () => reachability(['lab'])} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
     await settle()
     const header = screen.getByRole('button', { name: /LAB\(lab\)/ })
     expect(header.getAttribute('aria-expanded')).toBe('true')
@@ -188,11 +360,7 @@ describe('InstanceGroups', () => {
 
   it('reveals eight more sessions per click, then folds the list back', async () => {
     const { container } = render(
-      <InstanceGroups
-        fetchTree={async () => [group('wide', 20)]}
-        fetchInstances={async () => reachability(['wide'])}
-        t={t}
-      />,
+      <InstanceGroups fetchTree={async () => [group('wide', 20)]} retry={retrySpy()} t={t} />,
     )
     await settle()
     expect(container.querySelectorAll('[data-session-key]')).toHaveLength(8)
@@ -209,11 +377,7 @@ describe('InstanceGroups', () => {
 
   it('shows the first eight sessions and reveals the rest instead of dropping them', async () => {
     const { container } = render(
-      <InstanceGroups
-        fetchTree={async () => [group('edge', 10)]}
-        fetchInstances={async () => reachability(['edge'])}
-        t={t}
-      />,
+      <InstanceGroups fetchTree={async () => [group('edge', 10)]} retry={retrySpy()} t={t} />,
     )
     await settle()
     expect(container.querySelectorAll('[data-session-key]')).toHaveLength(8)
@@ -228,7 +392,9 @@ describe('InstanceGroups', () => {
     fireEvent.click(less)
     expect(container.querySelectorAll('[data-session-key]')).toHaveLength(8)
   })
+})
 
+describe('InstanceGroups frames', () => {
   it('keeps the previous tree when a frame fails', async () => {
     vi.useFakeTimers()
     let fail = false
@@ -236,7 +402,7 @@ describe('InstanceGroups', () => {
       if (fail) throw new Error('boom')
       return [group('core', 1)]
     })
-    render(<InstanceGroups fetchTree={fetchTree} fetchInstances={async () => reachability(['core'])} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
     await settle()
     expect(screen.getByText('session-0')).toBeTruthy()
 
@@ -247,23 +413,22 @@ describe('InstanceGroups', () => {
     expect(screen.getByText('session-0')).toBeTruthy()
   })
 
-  it('keeps the previous reachability when the instances read fails', async () => {
+  it('switches to the offline rendering when a later frame reports unreachable', async () => {
     vi.useFakeTimers()
-    let fail = false
-    const fetchInstances = vi.fn(async () => {
-      if (fail) throw new Error('boom')
-      return reachability(['stay'])
-    })
-    const { container } = render(
-      <InstanceGroups fetchTree={async () => [group('stay', 1)]} fetchInstances={fetchInstances} t={t} />,
-    )
+    let down = false
+    const fetchTree = vi.fn(async () => [down
+      ? group('shift', 0, '/workspace', { state: 'unreachable' as const, error: 'gone' })
+      : group('shift', 1)])
+    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
     await settle()
-    expect(container.querySelector('[data-state="done"]')).not.toBeNull()
+    expect(container.querySelector('[data-instance-state="connected"]')).not.toBeNull()
 
-    fail = true
+    down = true
     await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
-    expect(fetchInstances).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('button', { name: /STAY\(stay\), Connected/ })).toBeTruthy()
+    const header = container.querySelector('[data-instance-id="shift"]') as HTMLElement
+    expect(header.getAttribute('data-instance-state')).toBe('unreachable')
+    expect(header.textContent).toBe('SHIFT(shift)Offline')
+    expect(container.querySelector('[data-instance-offline="shift"]')?.textContent).toContain('gone')
   })
 
   it('falls back to the key without the instance prefix when the protocol has no session id', async () => {
@@ -272,6 +437,7 @@ describe('InstanceGroups', () => {
         fetchTree={async () => [{
           instanceId: 'raw',
           label: 'RAW(raw)',
+          state: 'connected',
           runningCount: 0,
           sessionCount: 2,
           workspaces: [{
@@ -284,7 +450,7 @@ describe('InstanceGroups', () => {
             ],
           }],
         }]}
-        fetchInstances={async () => reachability(['raw'])}
+        retry={retrySpy()}
         t={t}
       />,
     )
@@ -293,57 +459,45 @@ describe('InstanceGroups', () => {
     expect(screen.getByText('unqualified')).toBeTruthy()
   })
 
-  it('shows the connecting dot until a reachability frame names the instance', async () => {
-    // The instances read fails: the tree still renders and no state is known yet.
-    const failed = render(
-      <InstanceGroups
-        fetchTree={async () => [group('pending', 0)]}
-        fetchInstances={async () => { throw new Error('boom') }}
-        t={t}
-      />,
-    )
-    await settle()
-    expect(failed.getByRole('button', { name: /PENDING\(pending\), Connecting/ })).toBeTruthy()
-    cleanup()
-
-    // The instances read succeeds but omits the id the tree reports.
-    const missing = render(
-      <InstanceGroups
-        fetchTree={async () => [group('pending', 0)]}
-        fetchInstances={async () => []}
-        t={t}
-      />,
-    )
-    await settle()
-    expect(missing.getByRole('button', { name: /PENDING\(pending\), Connecting/ })).toBeTruthy()
-  })
-
   it('drops frames that arrive after unmount', async () => {
     let resolveTree: (value: readonly InstanceGroupView[]) => void = () => {}
-    let resolveInstances: (value: readonly InstanceInfoView[]) => void = () => {}
     const { unmount } = render(
       <InstanceGroups
         fetchTree={() => new Promise((resolve) => { resolveTree = resolve })}
-        fetchInstances={() => new Promise((resolve) => { resolveInstances = resolve })}
+        retry={retrySpy()}
         t={t}
       />,
     )
     unmount()
     await act(async () => {
       resolveTree([group('late', 1)])
-      resolveInstances(reachability(['late']))
       await Promise.resolve()
     })
     expect(document.querySelector('[data-dsh-instance-groups]')).toBeNull()
   })
 
+  it('drops a retry outcome that arrives after unmount', async () => {
+    let resolveRetry: () => void = () => {}
+    const retry = vi.fn(async () => { await new Promise<void>((resolve) => { resolveRetry = resolve }) })
+    const fetchTree = vi.fn(async () => [
+      group('gone', 0, '/workspace', { state: 'unreachable' as const, error: 'down' }),
+    ])
+    const { unmount } = render(<InstanceGroups fetchTree={fetchTree} retry={retry} t={t} />)
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    unmount()
+    await act(async () => {
+      resolveRetry()
+      await Promise.resolve()
+    })
+    // The post-retry read never runs on an unmounted section.
+    expect(fetchTree).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-dsh-instance-groups]')).toBeNull()
+  })
+
   it('folds a workspace subtree from its own row', async () => {
     const { container } = render(
-      <InstanceGroups
-        fetchTree={async () => [group('fold', 3)]}
-        fetchInstances={async () => reachability(['fold'])}
-        t={t}
-      />,
+      <InstanceGroups fetchTree={async () => [group('fold', 3)]} retry={retrySpy()} t={t} />,
     )
     await settle()
     const row = container.querySelector('[data-workspace-key="fold:/workspace"]') as HTMLElement
@@ -359,10 +513,7 @@ describe('InstanceGroups', () => {
   })
 
   it('mounts the slot body only while the column is wide', async () => {
-    const Slot = instanceGroupsSlot({
-      fetchTree: async () => [group('slot', 1)],
-      fetchInstances: async () => reachability(['slot']),
-    })
+    const Slot = instanceGroupsSlot({ fetchTree: async () => [group('slot', 1)], retry: retrySpy() })
     const rail = render(<Slot t={t} wide={false} />)
     expect(rail.container.querySelector('[data-dsh-instance-groups]')).toBeNull()
     cleanup()
@@ -374,7 +525,7 @@ describe('InstanceGroups', () => {
 
   it('renders nothing when the control plane is absent or has no instances', async () => {
     const { container } = render(
-      <InstanceGroups fetchTree={async () => []} fetchInstances={async () => []} t={t} />,
+      <InstanceGroups fetchTree={async () => []} retry={retrySpy()} t={t} />,
     )
     await settle()
     expect(container.querySelector('[data-dsh-instance-groups]')).toBeNull()

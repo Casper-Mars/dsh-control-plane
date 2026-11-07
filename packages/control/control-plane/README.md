@@ -13,6 +13,7 @@
 | `src/index.ts` | Cordis 插件：`controlPlane.instances` / `.tree()` / `.route(key)` |
 | `src/upstream.ts` | 每实例一条出站连接（独立 Cordis 子 root + client connection + 只挂 `session` 命名空间），`listSessions()` / `createSession()` / 状态与错误 |
 | `src/index.ts` | `controlPlane.connect()`（连全部 + 探活）、`.snapshot()`（并发拉取并组树）、`.states()`、`.dispose()` |
+| `src/connections.ts` | 每实例连接注册表：重连（并发去重）、自动恢复限频（默认 5s/实例）、失败原因（值而非抛错） |
 | `scripts/demo-tree.ts` | 假数据演示三级结构 |
 | `scripts/demo-two.ts` | 两个真实实例 → 三元树 + 连通状态 |
 
@@ -20,19 +21,27 @@
 
 ### 3.4 前置：Remote 命名空间（已完成）
 
-控制面类改为 `TypertRemoteService`，暴露三个方法（生成物：`lib/typert.host.js`、`lib/typert.remote-client.js`）：
+控制面类改为 `TypertRemoteService`，暴露四个方法（生成物：`lib/typert.host.js`、`lib/typert.remote-client.js`）：
 
 | 方法 | 返回 |
 |---|---|
 | `controlPlane/instances` | `InstanceInfo[]`（id、name、label=`name(id)`、state、error） |
-| `controlPlane/tree` | `InstanceNode[]`（实例 → 工作区 → 会话，含 runningCount） |
+| `controlPlane/tree` | `InstanceNode[]`（实例 → 工作区 → 会话，含 runningCount、state、error） |
 | `controlPlane/route` | `{ key }` → `{ instanceId, sessionId }` |
+| `controlPlane/reconnect` | `{ instanceId }` → `{ state, error? }`（失败是值，不是拒绝） |
 
 - 边界类型集中在 `src/types.ts`，通过 `./types` 子路径导出（Typert 的硬性要求）
 - 生成命令：`node --import tsx/esm scripts/generate-typert.ts`（build:artifacts 里也会跑）
-- 生成的描述符：`methods: controlPlane/instances, controlPlane/route, controlPlane/tree`
+- 生成的描述符：`methods: controlPlane/instances, controlPlane/route, controlPlane/tree, controlPlane/reconnect`
 
-未实现（下一步）：浏览器侧消费（`ctx.remote.controlPlane.tree()`）+ 侧边栏三级分组；WS 事件流见已知限制。
+未实现（下一步）：WS 事件流见已知限制。
+
+### 3.5 离线态与重连（S3-03）
+
+- `controlPlane/tree` 的每个实例节点带 `state`（`connecting` / `connected` / `unreachable`）与可选 `error`；侧边栏以这一帧为准，不再单独轮询 `instances`。
+- `snapshot()` 在某个实例读取失败时**不写入空数组**：该实例保留 `unreachable` + 错误原因、`workspaces` 为空。这样「离线」与「在线但无会话」在数据上就可区分。
+- `controlPlane/reconnect({ instanceId })` 重连单个实例：先 dispose 旧连接，再 `Upstream.connect` + `listSessions` 探活。失败返回 `{ state: 'unreachable', error }` 而不是抛错（侧边栏要显示原因）；同一实例的并发重连共享一次尝试（in-flight map）。
+- 自动恢复：`snapshot()` 开头对「从未连上」的实例做后台重连，每个实例最多 5s 一次（`InstanceConnections.recover`）。已挂载但探活失败的连接留在注册表里，下一次 `listSessions()` 自己恢复，不触发重连。
 
 ### 3.3 验证结果（轮询 diff）
 

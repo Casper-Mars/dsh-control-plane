@@ -19,13 +19,14 @@ import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 import {
   InstanceGroups, instanceGroupsSlot,
-  type InstanceGroupView, type InstanceInfoView, type InstanceSessionView,
+  type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
 import { apply, inject } from '../src/client/index.ts'
 import { de, en, es, fr, ja, pt, ru, zh } from '../src/client/locales.ts'
@@ -33,6 +34,11 @@ import { de, en, es, fr, ja, pt, ru, zh } from '../src/client/locales.ts'
 const t = makeTranslate({ ...commonEn, ...en })
 
 const owners = new Set<Fiber>()
+
+/** The shell frame that owns the `sidebar` hole the section registers into. */
+function SidebarFrame({ renderSlot }: PropsRenderSlots<'sidebar'>) {
+  return renderSlot('sidebar', { collapsed: false, width: 300, drawer: false })
+}
 
 afterEach(async () => {
   cleanup()
@@ -62,10 +68,18 @@ function session(instanceId: string, index: number, minutesAgo = index): Instanc
   }
 }
 
-function group(instanceId: string, count: number, path = `/ws-${instanceId}`): InstanceGroupView {
+function group(
+  instanceId: string,
+  count: number,
+  path = `/ws-${instanceId}`,
+  state: InstanceGroupView['state'] = 'connected',
+  error?: string,
+): InstanceGroupView {
   return {
     instanceId,
     label: `${instanceId}(id)`,
+    state,
+    ...(error === undefined ? {} : { error }),
     runningCount: count > 0 ? 1 : 0,
     sessionCount: count,
     workspaces: count === 0 ? [] : [{
@@ -77,8 +91,12 @@ function group(instanceId: string, count: number, path = `/ws-${instanceId}`): I
   }
 }
 
-function reach(ids: readonly string[], state: InstanceInfoView['state'] = 'connected'): readonly InstanceInfoView[] {
-  return ids.map(id => ({ id, label: `${id}(id)`, state }))
+/**
+ * A `retry` reader: since S3-03 reachability comes from the tree frame itself,
+ * so the section's only other reader is the retry control.
+ */
+function retry(): (instanceId: string) => Promise<void> {
+  return async () => {}
 }
 
 /** Count rendered session rows. */
@@ -94,7 +112,7 @@ describe('P1 header contents and tri-state reachability', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('p1a', 3)]}
-        fetchInstances={async () => reach(['p1a'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -113,8 +131,8 @@ describe('P1 header contents and tri-state reachability', () => {
   it('maps connecting to the spinner and unreachable to the error dot', async () => {
     const connecting = render(
       <InstanceGroups
-        fetchTree={async () => [group('p1b', 0)]}
-        fetchInstances={async () => reach(['p1b'], 'connecting')}
+        fetchTree={async () => [group('p1b', 0, '/ws-p1b', 'connecting')]}
+        retry={retry()}
         t={t}
       />,
     )
@@ -129,14 +147,14 @@ describe('P1 header contents and tri-state reachability', () => {
 
     const unreachable = render(
       <InstanceGroups
-        fetchTree={async () => [group('p1b', 0)]}
-        fetchInstances={async () => reach(['p1b'], 'unreachable')}
+        fetchTree={async () => [group('p1b', 0, '/ws-p1b', 'unreachable')]}
+        retry={retry()}
         t={t}
       />,
     )
     await settle()
     const unreachableHeader = unreachable.getByRole('button', {
-      name: 'p1b(id), Unreachable, 0 sessions',
+      name: 'p1b(id), Unreachable',
     })
     expect(unreachableHeader.getAttribute('data-instance-state')).toBe('unreachable')
     const errorDot = unreachableHeader.querySelector('[data-state]') as HTMLElement
@@ -146,17 +164,21 @@ describe('P1 header contents and tri-state reachability', () => {
     expect(errorDot.getAttribute('class')).not.toBe(spinnerClass)
   })
 
-  it('falls back to connecting until a reachability frame names the instance', async () => {
+  it('takes the state from the tree frame only, even for a group with rows', async () => {
     const { container } = render(
       <InstanceGroups
-        fetchTree={async () => [group('p1c', 0)]}
-        fetchInstances={async () => reach([])}
+        fetchTree={async () => [group('p1c', 2, '/ws-p1c', 'connecting')]}
+        retry={retry()}
         t={t}
       />,
     )
     await settle()
     expect(container.querySelector('[data-instance-state="connecting"]')).not.toBeNull()
-    expect(screen.getByRole('button', { name: /p1c\(id\), Connecting, 0 sessions/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /p1c\(id\), Connecting, 2 sessions/ })).toBeTruthy()
+    // The count cell shows a dash while the state is not "connected"; the rows
+    // themselves are whatever the frame carried.
+    expect(container.querySelector('[data-instance-id="p1c"]')?.textContent).toBe('p1c(id)—')
+    expect(rows(container)).toBe(2)
   })
 })
 
@@ -167,9 +189,8 @@ describe('P2 fold is not reset by polling', () => {
   it('keeps aria-expanded=false and renders no child rows after the second frame', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('p2', 2)])
-    const fetchInstances = vi.fn(async () => reach(['p2']))
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} fetchInstances={fetchInstances} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
     )
     await settle()
     expect(rows(container)).toBe(2)
@@ -181,7 +202,6 @@ describe('P2 fold is not reset by polling', () => {
 
     await tick(6000)
     expect(fetchTree).toHaveBeenCalledTimes(2)
-    expect(fetchInstances).toHaveBeenCalledTimes(2)
     expect(container.querySelector('[data-dsh-instance-groups]')).not.toBeNull()
     expect(screen.getByRole('button', { name: /p2\(id\)/ }).getAttribute('aria-expanded')).toBe('false')
     expect(rows(container)).toBe(0)
@@ -200,7 +220,7 @@ describe('P3 session paging', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('p3', 20, '/p3')]}
-        fetchInstances={async () => reach(['p3'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -225,7 +245,7 @@ describe('P3 session paging', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('p3zh', 20, '/p3zh')]}
-        fetchInstances={async () => reach(['p3zh'])}
+        retry={retry()}
         t={zhT}
       />,
     )
@@ -253,7 +273,7 @@ describe('P4 failed reads keep the last good frame', () => {
       return [group('p4a', 3, '/p4a')]
     })
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} fetchInstances={async () => reach(['p4a'])} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
     )
     await settle()
     expect(rows(container)).toBe(3)
@@ -266,27 +286,40 @@ describe('P4 failed reads keep the last good frame', () => {
     expect(rows(container)).toBe(3)
   })
 
-  it('keeps the last reachability dot when fetchInstances rejects', async () => {
+  it('keeps the last state while a frame fails, then adopts the one it is given', async () => {
     vi.useFakeTimers()
     let fail = false
-    const fetchInstances = vi.fn(async () => {
-      if (fail) throw new Error('instances down')
-      return reach(['p4b'], 'unreachable')
+    let down = false
+    const fetchTree = vi.fn(async () => {
+      if (fail) throw new Error('tree down')
+      return [down
+        ? group('p4b', 0, '/ws-p4b', 'unreachable', 'gone')
+        : group('p4b', 1)]
     })
     const { container } = render(
-      <InstanceGroups fetchTree={async () => [group('p4b', 1)]} fetchInstances={fetchInstances} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
     )
     await settle()
-    expect(container.querySelector('[data-instance-state="unreachable"]')).not.toBeNull()
+    expect(container.querySelector('[data-instance-state="connected"]')).not.toBeNull()
 
     fail = true
     await tick(6000)
-    expect(fetchInstances).toHaveBeenCalledTimes(2)
+    expect(fetchTree).toHaveBeenCalledTimes(2)
     const header = container.querySelector('[data-instance-id="p4b"]') as HTMLElement
-    expect(header.getAttribute('data-instance-state')).toBe('unreachable')
-    expect(header.querySelector('[data-state="error"]')).not.toBeNull()
+    expect(header.getAttribute('data-instance-state')).toBe('connected')
     expect(header.textContent).toContain('1')
     expect(rows(container)).toBe(1)
+
+    // The next successful frame is authoritative: offline replaces the rows.
+    fail = false
+    down = true
+    await tick(6000)
+    expect(fetchTree).toHaveBeenCalledTimes(3)
+    const offline = container.querySelector('[data-instance-id="p4b"]') as HTMLElement
+    expect(offline.getAttribute('data-instance-state')).toBe('unreachable')
+    expect(offline.textContent).toContain('Offline')
+    expect(container.querySelector('[data-instance-offline="p4b"]')?.textContent).toContain('gone')
+    expect(rows(container)).toBe(0)
   })
 })
 
@@ -310,7 +343,7 @@ describe('P5 plain dsh (no control plane)', () => {
     const slots = ctx.get('slots') as SlotRegistry
     slots.register(
       { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } },
-      () => null,
+      SidebarFrame,
     )
     return { ctx, slots }
   }
@@ -340,8 +373,8 @@ describe('P5 plain dsh (no control plane)', () => {
   it('control: the same bench renders once a namespace is provided', async () => {
     const { ctx, slots } = await bench()
     const tree = vi.fn(async () => ({ ok: true as const, value: [group('p5c', 1)] }))
-    const instances = vi.fn(async () => ({ ok: true as const, value: reach(['p5c']) }))
-    ctx.provide('remote.controlPlane', { tree, instances } as never)
+    const reconnect = vi.fn(async () => ({ ok: true as const, value: { state: 'connected' } }))
+    ctx.provide('remote.controlPlane', { tree, reconnect } as never)
     const sidebar = ctx.plugin({ inject: [...inject], apply })
     await sidebar.await()
     try {
@@ -352,7 +385,6 @@ describe('P5 plain dsh (no control plane)', () => {
       const view = render(<Section t={t} wide />)
       await settle()
       expect(tree).toHaveBeenCalledOnce()
-      expect(instances).toHaveBeenCalledOnce()
       expect(view.container.querySelector('[data-dsh-instance-groups]')).not.toBeNull()
       expect(view.queryByRole('button', { name: /p5c\(id\), Connected, 1 sessions/ as never })).toBeTruthy()
     } finally {
@@ -368,18 +400,18 @@ describe('P6 rail (wide=false)', () => {
   it('does not render the tree and never calls the readers', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('p6', 2)])
-    const fetchInstances = vi.fn(async () => reach(['p6']))
-    const Slot = instanceGroupsSlot({ fetchTree, fetchInstances })
+    const onRetry = vi.fn(retry())
+    const Slot = instanceGroupsSlot({ fetchTree, retry: onRetry })
     const { container } = render(<Slot t={t} wide={false} />)
     await settle()
     expect(container.querySelector('[data-dsh-instance-groups]')).toBeNull()
     expect(container.innerHTML).toBe('')
     expect(fetchTree).not.toHaveBeenCalled()
-    expect(fetchInstances).not.toHaveBeenCalled()
+    expect(onRetry).not.toHaveBeenCalled()
 
     await tick(6000)
     expect(fetchTree).not.toHaveBeenCalled()
-    expect(fetchInstances).not.toHaveBeenCalled()
+    expect(onRetry).not.toHaveBeenCalled()
   })
 
   it('the shell hands the seat its column state (static wiring guard)', () => {
@@ -392,8 +424,7 @@ describe('P6 rail (wide=false)', () => {
   it('mounts and polls when wide=true (control case)', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('p6b', 1)])
-    const fetchInstances = vi.fn(async () => reach(['p6b']))
-    const Slot = instanceGroupsSlot({ fetchTree, fetchInstances })
+    const Slot = instanceGroupsSlot({ fetchTree, retry: retry() })
     const { container } = render(<Slot t={t} wide />)
     await settle()
     expect(container.querySelector('[data-dsh-instance-groups]')).not.toBeNull()
@@ -413,6 +444,8 @@ describe('locale coverage for the new keys', () => {
   const keys = [
     'instances.group', 'instances.state.connected', 'instances.state.connecting',
     'instances.state.unreachable', 'instances.expand', 'instances.collapse',
+    'instances.groupOffline', 'instances.offline', 'instances.empty',
+    'instances.retry', 'instances.retrying',
     'time.now', 'time.minutes', 'time.hours', 'time.days', 'time.months', 'time.years',
   ]
 
@@ -426,6 +459,10 @@ describe('locale coverage for the new keys', () => {
       expect(dictionary['instances.group'], language).toContain('{state}')
       expect(dictionary['instances.group'], language).toContain('{n}')
       expect(dictionary['instances.expand'], language).toContain('{n}')
+      // The offline header label has no count: an offline instance has none to report.
+      expect(dictionary['instances.groupOffline'], language).toContain('{name}')
+      expect(dictionary['instances.groupOffline'], language).toContain('{state}')
+      expect(dictionary['instances.groupOffline'], language).not.toContain('{n}')
     }
   })
 })

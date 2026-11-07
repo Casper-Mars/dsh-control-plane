@@ -14,7 +14,7 @@ import type { SidebarPanelMetadata, SidebarRootInjected, SidebarSectionInjected 
 import { createPanelPins } from './panel-pins.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
-import { instanceGroupsSlot, type InstanceGroupView, type InstanceInfoView } from './InstanceGroups.tsx'
+import { instanceGroupsSlot, type InstanceGroupView } from './InstanceGroups.tsx'
 import { PanelIcon } from './PanelIcon.tsx'
 import { en, ja, es, fr, de, ru, pt, zh, type SidebarKey } from './locales.ts'
 
@@ -47,7 +47,7 @@ type RemoteFrame<T> = { ok: true; value: T } | { ok: false; error: unknown }
 /** The control-plane Remote namespace this Client may compose. */
 interface ControlPlaneRemote {
   tree: () => Promise<RemoteFrame<readonly InstanceGroupView[]>>
-  instances: () => Promise<RemoteFrame<readonly InstanceInfoView[]>>
+  reconnect: (request: { readonly instanceId: string }) => Promise<RemoteFrame<unknown>>
 }
 
 /**
@@ -79,7 +79,6 @@ function controlPlaneRemote(ctx: ClientContext): ControlPlaneRemote | undefined 
  * poll, and identical references let React skip the render.
  */
 const NO_GROUPS: readonly InstanceGroupView[] = []
-const NO_INSTANCES: readonly InstanceInfoView[] = []
 
 interface WorkspaceNavigation {
   startSession(workspaceId?: Parameters<SidebarRootInjected['startSession']>[0]): void
@@ -149,9 +148,10 @@ export function apply(ctx: ClientContext): void {
       inject: injectProps,
     }, SidebarRoot)
   })
-  // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在，两次读取
-  // 都返回同一个空帧，组件不渲染、也不产生任何 Remote 调用。
-  // 读取失败时抛错（而不是返回空树），组件据此保留上一帧。
+  // 控制面组合进来时才渲染实例分组；普通 dsh 里这个命名空间不存在，读取返回同一个
+  // 空帧，组件不渲染、也不产生任何 Remote 调用。
+  // 读取失败时抛错（而不是返回空树），组件据此保留上一帧。实例状态由 tree 帧自带，
+  // 不再单独轮询 instances，避免两次读取给出不一致的在线状态。
   ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
     name: 'sidebar.instances',
     locale: NS,
@@ -163,12 +163,11 @@ export function apply(ctx: ClientContext): void {
       if (!result.ok) throw result.error
       return result.value
     },
-    fetchInstances: async () => {
+    retry: async (instanceId) => {
       const controlPlane = controlPlaneRemote(ctx)
-      if (controlPlane === undefined) return NO_INSTANCES
-      const result = await controlPlane.instances()
-      if (!result.ok) throw result.error
-      return result.value
+      if (controlPlane === undefined) return
+      // 失败是一个值（state/error），随后重读 tree 就能看到原因；这里不抛。
+      await controlPlane.reconnect({ instanceId })
     },
   })))
   // macOS desktop hides the collapsed sidebar entirely, so the open/New

@@ -19,7 +19,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   InstanceGroups,
-  type InstanceGroupView, type InstanceInfoView, type InstanceSessionView,
+  type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
 import { en, zh } from '../src/client/locales.ts'
 
@@ -56,6 +56,7 @@ function group(instanceId: string, sessions: readonly InstanceSessionView[]): In
   return {
     instanceId,
     label: `${instanceId}(id)`,
+    state: 'connected',
     runningCount: 0,
     sessionCount: sessions.length,
     workspaces: [{
@@ -67,9 +68,9 @@ function group(instanceId: string, sessions: readonly InstanceSessionView[]): In
   }
 }
 
-/** Reachability frame for the given instances. */
-function reach(ids: readonly string[]): readonly InstanceInfoView[] {
-  return ids.map(id => ({ id, label: `${id}(id)`, state: 'connected' }))
+/** A `retry` reader; reachability rides the tree frame since S3-03. */
+function retry(): (instanceId: string) => Promise<void> {
+  return async () => {}
 }
 
 /** Count rendered session rows. */
@@ -92,7 +93,7 @@ describe('session title priority: title first', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('t100a', [session('t100a', 1, '  Fix the login flow  ')])]}
-        fetchInstances={async () => reach(['t100a'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -111,7 +112,7 @@ describe('session title priority: title first', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('t100b', sessions)]}
-        fetchInstances={async () => reach(['t100b'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -140,7 +141,7 @@ describe('session title fallback: id, then key suffix', () => {
           session('t100c', 3, '\t\n'),
           session('t100c', 4),
         ])]}
-        fetchInstances={async () => reach(['t100c'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -161,7 +162,7 @@ describe('session title fallback: id, then key suffix', () => {
           { key: 't100d:blank-title', title: '  ', running: false, updatedAt: Date.now() },
           { key: 'no-separator', running: false, updatedAt: Date.now() },
         ])]}
-        fetchInstances={async () => reach(['t100d'])}
+        retry={retry()}
         t={t}
       />,
     )
@@ -182,9 +183,8 @@ describe('paging and fold regression with titled rows', () => {
     vi.useFakeTimers()
     const sessions = Array.from({ length: 20 }, (_, i) => session('t100e', i, `Task ${i}`))
     const fetchTree = vi.fn(async () => [group('t100e', sessions)])
-    const fetchInstances = vi.fn(async () => reach(['t100e']))
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} fetchInstances={fetchInstances} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
     )
     await settle()
     expect(rows(container)).toBe(8)
@@ -215,9 +215,8 @@ describe('paging and fold regression with titled rows', () => {
     vi.useFakeTimers()
     const sessions = Array.from({ length: 20 }, (_, i) => session('t100f', i, `Task ${i}`))
     const fetchTree = vi.fn(async () => [group('t100f', sessions)])
-    const fetchInstances = vi.fn(async () => reach(['t100f']))
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} fetchInstances={fetchInstances} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
     )
     await settle()
     expect(rows(container)).toBe(8)
@@ -243,7 +242,7 @@ describe('paging and fold regression with titled rows', () => {
     const { container } = render(
       <InstanceGroups
         fetchTree={async () => [group('t100g', sessions)]}
-        fetchInstances={async () => reach(['t100g'])}
+        retry={retry()}
         t={zhT}
       />,
     )

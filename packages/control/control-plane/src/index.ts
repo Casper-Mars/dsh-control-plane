@@ -1,12 +1,11 @@
 /**
  * Control-plane plugin: one Web UI over several Harness instances.
  *
- * Milestone 2 (this package) owns the data model and the routing identity:
- * configuration validation ({@link resolveInstances}) and the sidebar tree
- * ({@link buildTree}) with instance-qualified keys. The outbound connection
- * layer (one client connection per instance) and the Remote namespace that
- * feeds the browser land next; this module deliberately keeps no per-instance
- * runtime state yet.
+ * This package owns the data model and the routing identity: configuration
+ * validation ({@link resolveInstances}), the sidebar tree ({@link buildTree}),
+ * and the outbound connection registry ({@link InstanceConnections}) with its
+ * per-instance reachability, retry, and rate limiting. The Remote namespace
+ * below feeds all of that to the browser.
  *
  * @module @deepseek-ai/dsh-control-plane
  */
@@ -15,16 +14,21 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
+import { InstanceConnections } from './connections.ts'
 import { buildTree, qualify, split } from './tree.ts'
 import type {
-  InstanceInfo, InstanceNode, RouteRequest, RouteValue, SessionChange, SessionRow, UpstreamState,
+  InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest, ReconnectValue, RouteRequest, RouteValue,
+  SessionChange, SessionRow,
 } from './types.ts'
 import { Upstream, type UpstreamTransport } from './upstream.ts'
 
 export type { InstanceConfig, ResolvedInstance, Config as ControlPlaneConfig } from './config.ts'
 export type {
-  InstanceInfo, InstanceNode, RouteRequest, RouteValue, SessionChange, SessionNode, SessionRow, UpstreamState, WorkspaceNode,
+  InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest, ReconnectValue, RouteRequest, RouteValue,
+  SessionChange, SessionNode, SessionRow, UpstreamState, WorkspaceNode,
 } from './types.ts'
+export { InstanceConnections, DEFAULT_RETRY_INTERVAL_MS } from './connections.ts'
+export type { InstanceConnectionsOptions, OpenUpstream } from './connections.ts'
 export { Upstream } from './upstream.ts'
 export { buildTree, qualify, split, NO_WORKSPACE } from './tree.ts'
 export { resolveInstances } from './config.ts'
@@ -50,19 +54,15 @@ declare module '@deepseek-ai/cordis' {
 /**
  * Instance registry the browser-side tree is composed from.
  *
- * A live instance list is configuration-derived today; when the outbound
- * connection layer arrives it will add per-instance reachability here without
- * changing the shape the sidebar consumes.
+ * Connections live in {@link InstanceConnections}; this class adds the
+ * session-status/change fan-out and the polling loop the sidebar consumes.
  */
 export class ControlPlane extends TypertRemoteService {
   /** Instances in configuration order. */
   readonly instances: readonly ResolvedInstance[]
 
-  /** Per-instance reachability reported alongside the tree. */
-  private readonly upstreams = new Map<string, Upstream>()
-
-  /** Failures recorded by the last connect pass, keyed by instance id. */
-  private readonly connectErrors = new Map<string, string>()
+  /** Outbound connections, reachability, and the retry policy. */
+  private readonly connections: InstanceConnections
 
   /** Session running state per instance, fed by forwarded events. */
   private readonly running = new Map<string, Map<string, boolean>>()
@@ -88,6 +88,12 @@ export class ControlPlane extends TypertRemoteService {
   constructor(ctx: Context, config: RawConfig) {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
+    this.connections = new InstanceConnections(this.instances, {
+      open: async (instance, transport) => await Upstream.connect(instance, transport),
+      attach: (instance, upstream) => {
+        upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
+      },
+    })
     console.log('[control-plane] 插件已激活，实例数:', this.instances.length)
     // 调试：确认描述符是否已被 typert-loader 注册
     const typert = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
@@ -121,11 +127,27 @@ export class ControlPlane extends TypertRemoteService {
 
   /**
    * Current instance → workspace → session tree.
-   * @returns the composed tree; unreachable instances contribute empty groups.
+   * @returns the composed tree; an unreachable instance appears with its state,
+   *   its last error, and no sessions.
    */
   @Remote('tree')
   async treeSnapshot(): Promise<InstanceNode[]> {
     return await this.snapshot()
+  }
+
+  /**
+   * Retry one instance without restarting the control plane.
+   *
+   * A failed retry resolves with `{ state: 'unreachable', error }` instead of
+   * rejecting, so the sidebar can render the reason on that group. Concurrent
+   * retries of the same instance share one attempt.
+   * @param request - the instance to reconnect.
+   * @returns the outcome of the attempt.
+   * @throws if the id is not configured.
+   */
+  @Remote('reconnect')
+  async reconnect(request: ReconnectRequest): Promise<ReconnectValue> {
+    return await this.connections.reconnect(request.instanceId)
   }
 
   /**
@@ -143,29 +165,11 @@ export class ControlPlane extends TypertRemoteService {
    * Open one connection per configured instance. Failures are recorded per
    * instance and never reject the pass: one unreachable agent must not hide
    * the others.
-   * @returns the instance ids that connected.
+   * @param transportFor - optional per-instance transport overrides.
+   * @returns the instance ids that connected, in configuration order.
    */
   async connect(transportFor?: (instance: ResolvedInstance) => UpstreamTransport): Promise<string[]> {
-    const connected: string[] = []
-    await Promise.all(this.instances.map(async (instance) => {
-      try {
-        // 默认加入转发事件（免 token 的 Host 可直接用全局 WebSocket）；
-        // 仍要求凭据的实例由调用方通过 transportFor 关掉 events。
-        const upstream = await Upstream.connect(instance, { events: true, ...transportFor?.(instance) })
-        this.upstreams.set(instance.id, upstream)
-        upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
-        // A mounted connection is not a reachable one: probe once so the
-        // sidebar can mark an instance unreachable before its first refresh.
-        await upstream.listSessions()
-        this.connectErrors.delete(instance.id)
-        connected.push(instance.id)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`[control-plane] 实例 ${instance.id} 连接失败: ${message}`)
-        this.connectErrors.set(instance.id, message)
-      }
-    }))
-    return connected
+    return await this.connections.connect(transportFor)
   }
 
   /**
@@ -229,28 +233,25 @@ export class ControlPlane extends TypertRemoteService {
    * Reachability per instance, for the sidebar group headers.
    * @returns state plus the last error when unreachable.
    */
-  states(): Record<string, { state: UpstreamState; error?: string }> {
-    const result: Record<string, { state: UpstreamState; error?: string }> = {}
-    for (const instance of this.instances) {
-      const upstream = this.upstreams.get(instance.id)
-      const error = upstream?.error ?? this.connectErrors.get(instance.id)
-      result[instance.id] = {
-        state: upstream?.reachability ?? 'unreachable',
-        ...(error === undefined ? {} : { error }),
-      }
-    }
-    return result
+  states(): Record<string, InstanceStateReport> {
+    return this.connections.states()
   }
 
   /**
-   * Read every instance and compose the sidebar tree. An instance that fails
-   * here contributes no sessions and flips to `unreachable` on its own.
+   * Read every instance and compose the sidebar tree.
+   *
+   * An instance that fails here keeps the reachability its upstream reported
+   * (`unreachable` + error) and contributes **no row entry at all** — writing
+   * an empty list would make it indistinguishable from a connected instance
+   * with no sessions. Instances with no connection are retried in the
+   * background, rate limited by {@link InstanceConnections.recover}.
    * @returns the instance → workspace → session tree.
    */
   async snapshot(): Promise<InstanceNode[]> {
+    this.connections.recover()
     const rows = new Map<string, readonly SessionRow[]>()
     await Promise.all(this.instances.map(async (instance) => {
-      const upstream = this.upstreams.get(instance.id)
+      const upstream = this.connections.get(instance.id)
       if (upstream === undefined) return
       try {
         const listed = await upstream.listSessions()
@@ -261,10 +262,10 @@ export class ControlPlane extends TypertRemoteService {
           ? listed
           : listed.map(row => live.has(row.sessionId) ? { ...row, running: live.get(row.sessionId) === true } : row))
       } catch {
-        rows.set(instance.id, [])
+        // 保留该实例的 state/error，不写空数组：离线与"在线但无会话"必须可分
       }
     }))
-    return buildTree(this.instances, rows)
+    return buildTree(this.instances, rows, this.states())
   }
 
   /** Compare one instance's fresh list with the previous pass and emit changes. */
@@ -306,7 +307,7 @@ export class ControlPlane extends TypertRemoteService {
    * @returns the qualified session key.
    */
   async createSession(instanceId: string, cwd: string): Promise<string> {
-    const upstream = this.upstreams.get(instanceId)
+    const upstream = this.connections.get(instanceId)
     if (upstream === undefined) throw new Error(`control-plane: 实例 ${instanceId} 未连接`)
     return qualify(instanceId, await upstream.createSession(cwd))
   }
@@ -314,8 +315,7 @@ export class ControlPlane extends TypertRemoteService {
   /** Close every outbound connection. */
   async dispose(): Promise<void> {
     this.stopPolling()
-    await Promise.all([...this.upstreams.values()].map(upstream => upstream.dispose()))
-    this.upstreams.clear()
+    await this.connections.dispose()
   }
 
   /**
