@@ -78,6 +78,7 @@ function mountShell({ collapsed = false, width = 300, drawer = false, shortcuts 
       useShortcuts={selector => selector(shortcuts)}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={startSession} toggleSidebar={toggleSidebar} trackEntryClick={trackEntryClick} t={t}
       renderFactorySlot={() => null}
       renderSlot={((
@@ -97,6 +98,9 @@ function mountShell({ collapsed = false, width = 300, drawer = false, shortcuts 
           footerActionOwner = owner
           return <div data-testid="footer-action-seat" data-wide={owner.wide} />
         }
+        // The control-plane instance groups are their own seat above the
+        // workspace browser; this suite pins the workspace section only.
+        if (key === 'sidebar.instances') return null
         regionOwner = owner as SidebarSectionOwnerProps
         regionContext = opts?.hookContext
         return <div data-testid="region" data-wide={owner.wide}>{content}</div>
@@ -166,11 +170,9 @@ describe('SidebarRoot shell', () => {
     for (const button of screen.getAllByRole('button', { name: 'New session' })) {
       expect(button.getAttribute('aria-keyshortcuts')).toBe('Control+N')
     }
-    const expanded = screen.getAllByRole('button', { name: 'New session' }).find(button => button.querySelector('kbd') !== null)!
-    fireEvent.pointerEnter(expanded)
-    fireEvent.focus(expanded)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    expect(Array.from(expanded.querySelectorAll('kbd'), key => key.textContent)).toEqual(['Ctrl', 'N'])
+    // The wordmark is the only in-shell New Session control left after the
+    // control-plane trim removed the separate titlebar capsule.
+    expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
     cleanup()
     document.documentElement.dataset.platform = 'darwin'
     render(<HeaderLeadingControls toggleSidebar={vi.fn()} startSession={vi.fn()} selectPanel={vi.fn()} trackEntryClick={vi.fn()} t={t}
@@ -185,32 +187,34 @@ describe('SidebarRoot shell', () => {
     fireEvent.focus(button)
     expect(Array.from(screen.getByRole('tooltip').querySelectorAll('kbd'), key => key.textContent)).toEqual(['Ctrl', 'N'])
   })
-  it('routes New Session (capsule + wordmark) and the column toggle', () => {
+  it('routes New Session (wordmark) and the column toggle', () => {
     // Occupied brand slots keep New Session even when the build carries a version.
     vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
     const b = mountShell()
     expect(screen.getByTestId('custom-brand-mark')).toBeTruthy()
     expect(screen.getByTestId('custom-brand-name')).toBeTruthy()
-    // Expanded, both the wordmark and the capsule start a session and report a sidebar New Session click first.
+    // Expanded, the wordmark starts a session and reports a sidebar New Session click first.
     const starters = screen.getAllByRole('button', { name: 'New session' })
-    expect(starters).toHaveLength(2)
-    for (const button of starters) fireEvent.click(button)
-    expect(b.startSession).toHaveBeenCalledTimes(2)
+    expect(starters).toHaveLength(1)
+    fireEvent.click(starters[0]!)
+    expect(b.startSession).toHaveBeenCalledOnce()
     expect(b.trackEntryClick.mock.calls).toEqual([
-      [{ menu_name: 'new_session', position: 'sidebar' }],
       [{ menu_name: 'new_session', position: 'sidebar' }],
     ])
     expect(b.trackEntryClick.mock.invocationCallOrder[0]).toBeLessThan(b.startSession.mock.invocationCallOrder[0]!)
     fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
     expect(b.toggleSidebar).toHaveBeenCalledOnce()
-    expect(b.trackEntryClick).toHaveBeenCalledTimes(2)
+    expect(b.trackEntryClick).toHaveBeenCalledOnce()
   })
 
-  it('reports the collapsed rail New Session as a sidebar click outside the Windows caption', () => {
+  it('offers no New Session control in the collapsed rail', () => {
+    // The rail keeps only the expand toggle; the control-plane trim removed
+    // the collapsed capsule, so nothing can report a sidebar New Session click.
     const b = mountShell({ collapsed: true, width: 56 })
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
-    expect(b.startSession).toHaveBeenCalledOnce()
-    expect(b.trackEntryClick).toHaveBeenCalledExactlyOnceWith({ menu_name: 'new_session', position: 'sidebar' })
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }))
+    expect(b.startSession).not.toHaveBeenCalled()
+    expect(b.trackEntryClick).not.toHaveBeenCalled()
   })
 
   it('offers no New Session control while the access snapshot excludes session/create', () => {
@@ -225,6 +229,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       useRemoteAccess={useRemoteAccess}
       startSession={startSession} toggleSidebar={toggleSidebar} trackEntryClick={vi.fn()} t={t}
       renderFactorySlot={() => null}
@@ -258,6 +263,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={vi.fn()} toggleSidebar={vi.fn()} trackEntryClick={vi.fn()} t={t}
       renderFactorySlot={() => null}
       renderSlot={((_key: string, _owner: unknown, options?: { fallback?: ReactNode }) =>
@@ -283,6 +289,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={vi.fn()} toggleSidebar={vi.fn()} trackEntryClick={vi.fn()} t={t}
       renderFactorySlot={() => null}
       renderSlot={((_key: string, _owner: unknown, options?: { fallback?: ReactNode }) =>
@@ -312,6 +319,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={startSession} toggleSidebar={vi.fn()} trackEntryClick={trackEntryClick} t={t}
       renderFactorySlot={() => null}
       renderSlot={((_key: string, _owner: unknown, options?: { fallback?: ReactNode }) =>
@@ -364,6 +372,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={vi.fn()} toggleSidebar={vi.fn()} trackEntryClick={vi.fn()} t={t}
       renderFactorySlot={() => null}
       renderSlot={((_key: string, _owner: unknown, options?: { fallback?: ReactNode }) =>
@@ -412,7 +421,7 @@ describe('SidebarRoot shell', () => {
     b.rerender({ drawer: false, collapsed: true, width: 56 })
     expect(b.regionOwner().wide).toBe(false)
     expect(b.settingsOwner().wide).toBe(false)
-    expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
     const root = screen.getByTestId('region').closest<HTMLElement>('[class*="root"]')!
     expect(root.style.width).toBe('')
     expect(root.className).not.toMatch(/fading|railIn/)
@@ -429,6 +438,7 @@ describe('SidebarRoot shell', () => {
       useShortcuts={selector => selector([])}
       useContextMenu={contextMenuHook()} useResource={useResource} useWorkspaces={neverHook}
       {...allowAllAccess}
+      controlPlane={false}
       startSession={vi.fn()} toggleSidebar={vi.fn()} trackEntryClick={vi.fn()} t={t}
       renderFactorySlot={() => null}
       renderSlot={((key: string) => key === 'sidebar.toggle.badge'
@@ -457,12 +467,11 @@ it('keeps the macOS sidebar toggle in its top strip', () => {
   fireEvent.click(screen.getByRole('button', { name: en['toggle.collapse'] }))
   expect(shell.toggleSidebar).toHaveBeenCalledOnce()
   // The brand stays part of the logo row's window-drag surface: no button
-  // role (the global no-drag rule would subtract it); only the dedicated
-  // New Session capsule starts a session.
-  expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
+  // role (the global no-drag rule would subtract it), and the control-plane
+  // trim removed the separate New Session capsule from the shell.
+  expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
   expect(screen.getByTestId('custom-brand-mark')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'New session' }))
-  expect(shell.trackEntryClick).toHaveBeenCalledExactlyOnceWith({ menu_name: 'new_session', position: 'sidebar' })
+  expect(shell.trackEntryClick).not.toHaveBeenCalled()
 })
 
 it('wires the shell.leading controls to the shared sidebar actions', () => {
@@ -502,23 +511,25 @@ it.each([undefined, 'darwin', 'win32'] as const)('shows the collapsed-header New
 describe('Windows caption New Session analytics', () => {
   afterEach(() => { document.documentElement.removeAttribute('data-windows-titlebar') })
 
-  it('reports the collapsed caption New Session as a titlebar click', () => {
+  it('leaves the collapsed caption to the window-chrome controls', () => {
+    // The shell no longer renders a collapsed New Session capsule, so the
+    // caption's New Session control is HeaderLeadingControls' own (covered
+    // by the shell.leading tests above).
     document.documentElement.setAttribute('data-windows-titlebar', '')
     const b = mountShell({ collapsed: true, width: 0 })
-    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
-    expect(b.startSession).toHaveBeenCalledOnce()
-    expect(b.trackEntryClick).toHaveBeenCalledExactlyOnceWith({ menu_name: 'new_session', position: 'titlebar' })
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
+    expect(b.startSession).not.toHaveBeenCalled()
+    expect(b.trackEntryClick).not.toHaveBeenCalled()
   })
 
-  it('reports the expanded brand and New Session button as sidebar clicks', () => {
+  it('reports the expanded brand as a sidebar click', () => {
     document.documentElement.setAttribute('data-windows-titlebar', '')
     const b = mountShell()
     const starters = screen.getAllByRole('button', { name: 'New session' })
-    expect(starters).toHaveLength(2)
-    for (const button of starters) fireEvent.click(button)
-    expect(b.startSession).toHaveBeenCalledTimes(2)
+    expect(starters).toHaveLength(1)
+    fireEvent.click(starters[0]!)
+    expect(b.startSession).toHaveBeenCalledOnce()
     expect(b.trackEntryClick.mock.calls).toEqual([
-      [{ menu_name: 'new_session', position: 'sidebar' }],
       [{ menu_name: 'new_session', position: 'sidebar' }],
     ])
   })
@@ -542,14 +553,6 @@ describe('Windows caption tooltips', () => {
       expect(screen.getByRole('tooltip').getAttribute('data-side')).toBe('bottom')
     },
   )
-
-  it('drops the collapsed New Session bubble below the caption as well', () => {
-    vi.useFakeTimers()
-    document.documentElement.setAttribute('data-windows-titlebar', '')
-    mountShell({ collapsed: true, width: 0 })
-    hover(screen.getByRole('button', { name: 'New session' }))
-    expect(screen.getByRole('tooltip').getAttribute('data-side')).toBe('bottom')
-  })
 
   it('keeps the ordinary Web bubble beside its anchor', () => {
     vi.useFakeTimers()
@@ -635,7 +638,7 @@ it('moves focus to the rail toggle when the drawer opener unmounts', () => {
     opener.remove()
     h.rerender({ drawer: false, collapsed: true, width: 56 })
     act(() => { vi.advanceTimersByTime(150) })
-    expect(screen.getAllByRole('button', { name: 'New session' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'New session' })).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open sidebar' }))
   } finally {
     opener.remove()
