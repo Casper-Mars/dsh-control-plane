@@ -492,6 +492,13 @@ export class SessionManager {
    * Contract session.create; on success merge into summaries immediately (no
    * wait for the next refresh). A created session is blank by definition
    * (entity birth precedes the first message).
+   *
+   * A federated Workspace (or a federated blank Session) names another
+   * instance's resource. That instance answers with its bare local id, which
+   * this Client must not catalogue: a placeholder under the bare id would
+   * address the wrong owner on every later RPC and would surface a phantom row
+   * in the local list. The control plane's tree refresh carries the qualified
+   * row instead, so the local list is left untouched for that call.
    * @param opts - target workspace or working directory, an optional blank Session to reuse, and an optional Agent preset.
    * @returns the create result, naming the Session the Host created or reused.
   */
@@ -503,6 +510,8 @@ export class SessionManager {
       agentPreset?: string
     } = {},
   ): Promise<RemoteResult<{ sessionId: SessionId }>> {
+    const federated = (opts.workspaceId !== undefined && isFederatedSessionId(opts.workspaceId))
+      || (opts.sessionId !== undefined && isFederatedSessionId(opts.sessionId))
     const shared = {
       ...(opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }),
       ...(opts.agentPreset === undefined ? {} : { agentPreset: opts.agentPreset }),
@@ -511,12 +520,12 @@ export class SessionManager {
       ? { workspaceId: opts.workspaceId, ...shared }
       : { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...shared }
     const result = await this.remote.session.create(payload)
-    if (result.ok) {
+    if (result.ok && !federated) {
       this.recordMutation({ kind: 'placeholder', summary: { agentAvailable: true,
         sessionId: result.value.sessionId, updatedAt: Date.now(), running: false, blank: true,
         ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       } })
-    } else {
+    } else if (!result.ok && !federated) {
       const publishedSessionId = workspaceAttachSessionId(result.error)
       // Publication precedes attachment. The error's id is a real Session,
       // so expose it immediately as Ungrouped while the caller keeps the

@@ -123,6 +123,43 @@ function currentSessionSource(ctx: ClientContext): ObservableSnapshot<string | u
   return { getSnapshot: () => store.getSnapshot(), subscribe: listener => store.subscribe(listener) }
 }
 
+/** The slice of the Session Controller face the instance section creates through. */
+interface SessionCreateFace {
+  create(opts: { workspaceId?: string }): Promise<string>
+}
+
+/**
+ * Bind the optional Session Controller's `create` call for the instance
+ * section.
+ *
+ * Like {@link currentSessionSource}, the service is not a hard dependency: a
+ * Client that composes the sidebar without the Session UI must still boot. The
+ * face resolves when the service mounts and is forgotten when it goes away; a
+ * call made while it is absent fails with a readable message instead of a
+ * TypeError.
+ * @param ctx - client root context.
+ * @returns a create function taking one complete federated Workspace key.
+ */
+function sessionCreate(ctx: ClientContext): (workspaceId: string) => Promise<string> {
+  let sessions: SessionCreateFace | undefined
+  ctx.inject(['sessions'], (scope) => {
+    const face = scope.get('sessions') as SessionCreateFace | undefined
+    sessions = face
+    scope.effect(() => () => {
+      if (sessions === face) sessions = undefined
+    }, 'ui-sidebar: session create')
+  })
+  return async (workspaceId) => {
+    const face = sessions
+    // A fixture may provide a partial face (the list reader alone); a missing
+    // create is reported like a missing service, not a TypeError.
+    if (face === undefined || typeof face.create !== 'function') {
+      throw new Error('sessions service is unavailable')
+    }
+    return await face.create({ workspaceId })
+  }
+}
+
 /** Services required by the sidebar plugin. */
 export const inject = ['slots', 'layout', 'uiWorkspace', 'locale', 'shortcuts']
 
@@ -191,17 +228,24 @@ export function apply(ctx: ClientContext): void {
   // 空帧，组件不渲染、也不产生任何 Remote 调用。
   // 读取失败时抛错（而不是返回空树），组件据此保留上一帧。实例状态由 tree 帧自带，
   // 不再单独轮询 instances，避免两次读取给出不一致的在线状态。
+  const readTree = async (): Promise<readonly InstanceGroupView[]> => {
+    const controlPlane = controlPlaneRemote(ctx)
+    if (controlPlane === undefined) return NO_GROUPS
+    const result = await controlPlane.tree()
+    if (!result.ok) throw result.error
+    return result.value
+  }
+  const createSession = sessionCreate(ctx)
   ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
     name: 'sidebar.instances',
     locale: NS,
   }, instanceGroupsSlot({
-    fetchTree: async () => {
-      const controlPlane = controlPlaneRemote(ctx)
-      if (controlPlane === undefined) return NO_GROUPS
-      const result = await controlPlane.tree()
-      if (!result.ok) throw result.error
-      return result.value
-    },
+    fetchTree: readTree,
+    // 新建成功后立即重读，而不是等下一次 6s 轮询。
+    refreshTree: readTree,
+    // 工作区键本身就是 `<instanceId>:<cwd>`；联邦路由剥前缀转发，返回的是
+    // 该实例的裸 sessionId，前缀由实例分区在导航前拼回。
+    createSession,
     retry: async (instanceId) => {
       const controlPlane = controlPlaneRemote(ctx)
       if (controlPlane === undefined) return

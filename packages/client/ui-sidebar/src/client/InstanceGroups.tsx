@@ -25,13 +25,21 @@
  * headers and rows are plain stacked rows, each folding or navigating on its
  * own), so `button` + `aria-current` keeps the ARIA self-consistent without
  * inventing a roving-tabindex tree around markup that does not nest as one.
+ *
+ * A workspace row carries two sibling actions (fold, and create a Session in
+ * that workspace). It stays a non-interactive flex container around two native
+ * buttons instead of becoming a `role="treeitem"`: a treeitem needs a
+ * `tree`/`treegroup` owner this section intentionally does not have, and a
+ * nested button would be invalid HTML. Two siblings keep both controls
+ * keyboard-native (Tab + Enter/Space) and leave the fold state on the button
+ * that owns `aria-expanded`, with no composite widget semantics to maintain.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import {
-  IconFolderCloseRegular, IconFolderOpenRegular, IconTriangleRightFillRegular,
+  IconFolderCloseRegular, IconFolderOpenRegular, IconNewChatOutlineRegular, IconTriangleRightFillRegular,
   relativeTime, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -104,6 +112,27 @@ export interface InstanceGroupsReaders {
    * it, which is the only composition that renders rows at all.
    */
   readonly openSession?: ((key: string) => void) | undefined
+  /**
+   * Creates a Session in one workspace and resolves its owner-local id.
+   *
+   * The argument is the complete federated Workspace key
+   * (`<instanceId>:<cwd>`): the control plane strips the prefix, forwards the
+   * call to the owning instance, and returns that instance's **bare** Session
+   * id. The caller must therefore qualify the result with the instance it used
+   * before navigating — the answer is never prefixed here.
+   *
+   * Optional for the same reason as {@link openSession}: an isolated fixture
+   * renders the tree without a Session service. A composed control-plane
+   * Client always wires it, which is the only composition that shows the
+   * button.
+   */
+  readonly createSession?: ((workspaceId: string) => Promise<string>) | undefined
+  /**
+   * Re-reads the tree once a created Session exists, so the new row lands
+   * immediately instead of on the next poll. Separate from {@link fetchTree}
+   * so a caller can supply a different refresh policy (future: incremental).
+   */
+  readonly refreshTree?: (() => Promise<readonly InstanceGroupView[]>) | undefined
   /**
    * The Session the main view currently shows. The section subscribes with
    * `useSyncExternalStore`, so the current-row marker follows navigation
@@ -299,7 +328,7 @@ export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
  * @returns the instance section, or nothing while there is neither a frame nor a control plane.
  */
 export function InstanceGroups({
-  fetchTree, retry, openSession, currentSession, intervalMs = 6000, t,
+  fetchTree, retry, createSession, refreshTree, openSession, currentSession, intervalMs = 6000, t,
 }: InstanceGroupsProps & { t: TranslateNS<'sidebar'> }) {
   const [groups, setGroups] = useState<readonly InstanceGroupView[]>()
   // Instance ids whose retry is still running: the button shows progress and
@@ -308,6 +337,15 @@ export function InstanceGroups({
   // Last refused open: a row that cannot be opened says so instead of failing
   // silently, and the next accepted open clears the line.
   const [openFailure, setOpenFailure] = useState<string>()
+  // Workspace keys with a create in flight: the button renders disabled and a
+  // synchronous guard (below) refuses a second click from the same tick.
+  const [creating, setCreating] = useState<readonly string[]>([])
+  // Last create failure per workspace key. A failed create stays inline under
+  // its row instead of taking the tree down; the next attempt clears it.
+  const [createFailures, setCreateFailures] = useState<Readonly<Record<string, string>>>({})
+  // Synchronous pending set: React state lands after the handler returns, so
+  // two clicks in one tick would both pass an `includes` check.
+  const creatingKeys = useRef(new Set<string>())
   const disclosureState = useDisclosureState()
   // One subscribed source for the whole section: the readers hand in the same
   // observable every render, so the pair below is stable and the store is read
@@ -320,14 +358,14 @@ export function InstanceGroups({
   const currentId = useSyncExternalStore(subscribeCurrent, readCurrent, readCurrent)
   // Latest readers: the poll reads through this ref, so a caller that hands in
   // fresh closures every render cannot restart (or multiply) the timer.
-  const readers = useRef({ fetchTree, retry })
+  const readers = useRef({ fetchTree, retry, createSession, refreshTree })
   // Frames and retry outcomes that arrive after unmount are dropped.
   const mounted = useRef(true)
   // A function, not a property read: TypeScript would otherwise narrow the
   // ref to `true` and the lint gate would flag the unmount check as dead.
   const isMounted = (): boolean => mounted.current
   useEffect(() => {
-    readers.current = { fetchTree, retry }
+    readers.current = { fetchTree, retry, createSession, refreshTree }
   })
   useEffect(() => {
     mounted.current = true
@@ -394,6 +432,59 @@ export function InstanceGroups({
     }
   }
 
+  /**
+   * Create a Session in one workspace and open it.
+   *
+   * The workspace key is already federated (`<instanceId>:<cwd>`), so the
+   * control plane routes the whole call; its answer is the owner-local id,
+   * which this section prefixes before navigating. A failed refresh does not
+   * fail the operation: the create already succeeded, the poll recovers the
+   * tree, and navigation still proceeds. A failed create stays inline under
+   * the row and restores the button once the attempt settles.
+   * @param instanceId - owning instance, used to qualify the returned Session id.
+   * @param workspaceKey - complete federated Workspace key of the row.
+   */
+  const createSessionIn = (instanceId: string, workspaceKey: string): void => {
+    const { createSession } = readers.current
+    if (createSession === undefined || creatingKeys.current.has(workspaceKey)) return
+    creatingKeys.current.add(workspaceKey)
+    setCreating(previous => [...previous, workspaceKey])
+    setCreateFailures((previous) => {
+      if (previous[workspaceKey] === undefined) return previous
+      return Object.fromEntries(
+        Object.entries(previous).filter(([key]) => key !== workspaceKey),
+      )
+    })
+    void (async () => {
+      try {
+        const sessionId = await createSession(workspaceKey)
+        if (!isMounted()) return
+        const refresh = readers.current.refreshTree
+        if (refresh !== undefined) {
+          try {
+            const next = await refresh()
+            if (isMounted()) setGroups(next)
+          } catch {
+            // Creation succeeded; the next poll carries the new row.
+          }
+        }
+        if (!isMounted()) return
+        // The control plane answers with the bare id (see the reader contract).
+        open(`${instanceId}:${sessionId}`)
+      } catch (error: unknown) {
+        if (!isMounted()) return
+        const message = errorText(error instanceof Error ? error.message : String(error))
+        setCreateFailures(previous => ({
+          ...previous,
+          [workspaceKey]: message ?? t('instances.createFailedUnknown'),
+        }))
+      } finally {
+        creatingKeys.current.delete(workspaceKey)
+        if (isMounted()) setCreating(previous => previous.filter(key => key !== workspaceKey))
+      }
+    })()
+  }
+
   if (groups === undefined || groups.length === 0) return null
   const now = Date.now()
 
@@ -457,10 +548,14 @@ export function InstanceGroups({
               <WorkspaceGroup
                 key={workspace.key}
                 workspace={workspace}
+                canCreate={group.state === 'connected'}
+                creating={creating.includes(workspace.key)}
+                createFailure={createFailures[workspace.key]}
                 state={disclosureState}
                 now={now}
                 current={currentId}
                 onOpen={open}
+                onCreate={() => { createSessionIn(group.instanceId, workspace.key) }}
                 t={t}
               />
             ))}
@@ -515,19 +610,30 @@ function InstanceOffline({ group, retrying, onRetry, t }: {
 /**
  * One workspace row plus its session rows and its "show more" control.
  * @param props.workspace - workspace node.
+ * @param props.canCreate - whether this instance is connected (a create on a connecting group is not offered).
+ * @param props.creating - whether a create is in flight for this workspace.
+ * @param props.createFailure - last create failure for this workspace, if any.
  * @param props.state - disclosure snapshot.
  * @param props.now - epoch ms for relative times.
  * @param props.current - federated key of the Session the main view shows.
  * @param props.onOpen - opens one row's Session by its complete federated key.
+ * @param props.onCreate - creates a Session in this workspace.
  * @param props.t - sidebar dictionary.
  * @returns the workspace block.
  */
-function WorkspaceGroup({ workspace, state, now, current, onOpen, t }: {
+function WorkspaceGroup({
+  workspace, canCreate, creating, createFailure,
+  state, now, current, onOpen, onCreate, t,
+}: {
   workspace: InstanceWorkspaceView
+  canCreate: boolean
+  creating: boolean
+  createFailure: string | undefined
   state: DisclosureState
   now: number
   current: string | undefined
   onOpen: (key: string) => void
+  onCreate: () => void
   t: TranslateNS<'sidebar'>
 }) {
   const expanded = !state.collapsedWorkspaces.includes(workspace.key)
@@ -536,30 +642,66 @@ function WorkspaceGroup({ workspace, state, now, current, onOpen, t }: {
   const hidden = workspace.sessions.length - sessions.length
   return (
     <>
-      <button
-        type="button"
-        className={css.workspaceRow}
-        aria-expanded={expanded}
-        data-workspace-key={workspace.key}
-        onClick={() => {
-          const snapshot = disclosure.getSnapshot()
-          disclosure.set({
-            ...snapshot,
-            collapsedWorkspaces: toggled(snapshot.collapsedWorkspaces, workspace.key),
-          })
-        }}
-      >
-        <span className={css.slot}>
-          <span className={css.folder}>
-            {expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
+      {/* A row container, not a control: the fold button and the create button
+          are siblings, so neither nests inside the other and both keep native
+          button semantics. `data-workspace-key` stays on the fold button, the
+          element that owns `aria-expanded` and performs the disclosed action. */}
+      <div className={css.workspaceRow} data-workspace-row={workspace.key}>
+        <button
+          type="button"
+          className={css.workspaceToggle}
+          aria-expanded={expanded}
+          data-workspace-key={workspace.key}
+          title={workspace.path}
+          onClick={() => {
+            const snapshot = disclosure.getSnapshot()
+            disclosure.set({
+              ...snapshot,
+              collapsedWorkspaces: toggled(snapshot.collapsedWorkspaces, workspace.key),
+            })
+          }}
+        >
+          <span className={css.slot}>
+            <span className={css.folder}>
+              {expanded ? <IconFolderOpenRegular /> : <IconFolderCloseRegular />}
+            </span>
+            <span className={css.chevron}>
+              <IconTriangleRightFillRegular className={clsx(css.arrow, expanded && css.arrowOpen)} />
+            </span>
           </span>
-          <span className={css.chevron}>
-            <IconTriangleRightFillRegular className={clsx(css.arrow, expanded && css.arrowOpen)} />
-          </span>
-        </span>
-        <span className={css.title}>{workspace.path}</span>
-        <span className={css.count}>{workspace.sessions.length}</span>
-      </button>
+          <span className={css.title}>{workspace.path}</span>
+          <span className={css.count}>{workspace.sessions.length}</span>
+        </button>
+        {canCreate && (
+          // The visible affordance is an icon; the name says where the
+          // Session will be created, which the icon alone cannot convey.
+          // Enter/Space are consumed before activating so a modified chord
+          // stays inert and the path is deterministic under test.
+          <button
+            type="button"
+            className={css.workspaceCreate}
+            aria-label={t('instances.workspace.newSession', { workspace: workspace.path })}
+            data-workspace-create={workspace.key}
+            disabled={creating}
+            aria-busy={creating ? 'true' : undefined}
+            onClick={onCreate}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+              onCreate()
+            }}
+          >
+            <IconNewChatOutlineRegular size={14} />
+          </button>
+        )}
+      </div>
+      {createFailure !== undefined && (
+        <p className={css.createFailure} role="alert" data-create-failure={workspace.key}>
+          {t('instances.createFailed', { name: workspace.path, message: createFailure })}
+        </p>
+      )}
       {expanded && sessions.map((session) => {
         const title = sessionTitle(session)
         const selected = session.key === current

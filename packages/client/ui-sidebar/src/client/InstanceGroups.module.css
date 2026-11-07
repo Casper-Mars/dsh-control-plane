@@ -37,31 +37,107 @@
   margin-top: 4px;
 }
 
-/* Header and workspace rows are the official 32px project row: a leading 16px
-   cell, a flexible title, and a trailing count. They are buttons because both
-   fold their subtree; the chrome (padding, paint inset, radius, hover fill)
-   is the row chrome, so a header reads as part of the same list. */
+/* Instance header and workspace row share the official 32px project-row
+   chrome: a leading 16px cell, a flexible title, and a trailing count, all on
+   the shell's paint inset and radius. The header is one button. The workspace
+   row is a container: folding and creating are two sibling native buttons, so
+   neither is nested in the other (invalid HTML) and no composite treeitem
+   semantics are invented for a section that is not a tree widget. */
 .groupHeader,
 .workspaceRow {
   display: flex;
   align-items: center;
-  gap: var(--dsh-sidebar-label-gap);
   width: 100%;
   height: 32px;
   margin: 0;
-  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
   box-sizing: border-box;
-  border: none;
   border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
   border-radius: var(--dsw-radius-md);
   background: transparent;
   background-clip: padding-box;
   color: var(--dsw-alias-label-primary);
+}
+
+.groupHeader {
+  gap: var(--dsh-sidebar-label-gap);
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  border: none;
   font: inherit;
   text-align: left;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
+}
+
+/* The fold half of a workspace row: it fills the row and owns the title, the
+   count, and `aria-expanded`. */
+.workspaceToggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--dsh-sidebar-label-gap);
+  height: 100%;
+  margin: 0;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The create half: a 24px icon control on the trailing edge. It is display:
+   none at rest, so it reserves no title width; row hover reveals it for the
+   pointer, and focusing the row reveals it for the keyboard (the official
+   overflow-control treatment, without the modality latch). */
+.workspaceCreate {
+  flex: none;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 4px 0 0;
+  border: none;
+  border-radius: var(--dsw-radius-xs);
+  padding: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .workspaceRow:hover .workspaceCreate {
+    display: inline-flex;
+  }
+
+  .workspaceCreate:hover {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* Keyboard reach: Tab lands on the fold button, which reveals its sibling;
+   the create button's own focus keeps it visible while it is the target. */
+.workspaceRow:focus-within .workspaceCreate,
+.workspaceCreate:focus-visible {
+  display: inline-flex;
+}
+
+/* Touch platforms have no hover: show the control instead of hiding it. */
+@media (hover: none) {
+  .workspaceCreate {
+    display: inline-flex;
+  }
+}
+
+.workspaceCreate:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
 }
 
 /* Session rows keep the same metrics as the official session row, one indent
@@ -111,7 +187,8 @@
 }
 
 .groupHeader:focus-visible,
-.workspaceRow:focus-visible,
+.workspaceToggle:focus-visible,
+.workspaceCreate:focus-visible,
 .sessionRow:focus-visible {
   outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: -2px;
@@ -169,12 +246,12 @@
 
 /* Keyboard users get the same reveal, because they cannot hover. */
 .groupHeader:focus-visible .state,
-.workspaceRow:focus-visible .folder {
+.workspaceToggle:focus-visible .folder {
   display: none;
 }
 
 .groupHeader:focus-visible .chevron,
-.workspaceRow:focus-visible .chevron {
+.workspaceToggle:focus-visible .chevron {
   display: inline-flex;
 }
 
@@ -280,6 +357,18 @@
   padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
   color: var(--dsw-alias-state-error-primary);
   line-height: 20px;
+}
+
+/* A failed create stays inside its workspace group, one indent step in like
+   the session rows, and names the reason instead of only logging it. */
+.createFailure {
+  margin: 0;
+  padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset)) 2px calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
+  );
+  color: var(--dsw-alias-state-error-primary);
+  line-height: 20px;
+  overflow-wrap: anywhere;
 }
 
 /* "Show more"/"Show less": the official overflow control's 28px row and
