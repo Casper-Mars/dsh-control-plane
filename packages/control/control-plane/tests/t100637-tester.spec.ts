@@ -327,6 +327,15 @@ describe('t100637 / descriptor vs identifier tables', () => {
       // The caller's record is untouched.
       expect(args.request.address.childSessionId, endpoint).toBe('alpha:c-1')
     }
+    // A delegation-only address (no primary sessionId) routes on its pair too.
+    const delegationOnly = resolveFederationTarget(
+      'session/page',
+      { request: { address: { kind: 'subagent', parentSessionId: 'alpha:p-1', childSessionId: 'alpha:c-1' } } },
+      () => true,
+    )
+    expect(delegationOnly?.args).toEqual({
+      request: { address: { kind: 'subagent', parentSessionId: 'p-1', childSessionId: 'c-1' } },
+    })
   })
 
   it('refuses a subagent address whose parent and child live on different instances', () => {
