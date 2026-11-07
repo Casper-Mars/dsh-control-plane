@@ -1,11 +1,15 @@
 /**
  * Independent verification of the control-plane federation rollout switch
- * (t100636). Uses a Gateway stub that records registrations and disposals, so
- * the assertions are about lifecycle only: when a router exists, who is in its
- * instance predicate, and when it disappears.
+ * (t100636), updated for t100637's self-installed forwarder.
+ *
+ * The control plane is now its own forwarder: constructing it installs the
+ * transport, so the only questions left are lifecycle ones — is the router
+ * registered, who is in its instance predicate, and does it disappear on
+ * disposal. A Gateway stub records registrations and disposals, so nothing here
+ * touches a socket.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { FederationForwarder, FederationRouter } from '@deepseek-ai/dsh-api-gateway'
+import type { FederationRouter } from '@deepseek-ai/dsh-api-gateway'
 import { describe, expect, it } from 'vitest'
 import type { ResolvedInstance } from '../src/config.ts'
 import { ControlPlane } from '../src/index.ts'
@@ -14,11 +18,6 @@ const INSTANCES: readonly ResolvedInstance[] = [
   { id: 'alpha', name: 'Alpha', host: '127.0.0.1', port: 1, baseUrl: 'http://127.0.0.1:1' },
   { id: 'beta', name: 'Beta', host: '127.0.0.1', port: 2, baseUrl: 'http://127.0.0.1:2' },
 ]
-
-const FORWARDER: FederationForwarder = {
-  unary: async () => 'forwarded-unary',
-  stream: () => (async function * () { yield 'forwarded-stream' })(),
-}
 
 interface Registration {
   readonly router: FederationRouter
@@ -71,73 +70,78 @@ function active(stub: GatewayStub): Registration[] {
 }
 
 describe('control-plane federation rollout switch (independent)', () => {
-  it('registers only after a forwarder is installed, with the configured instance predicate', () => {
+  it('installs its own forwarder and registers with the configured instance predicate', () => {
     const gateway = gatewayStub()
     const control = new ControlPlane(stubContext(gateway), rawConfig())
 
-    // enabled=true but no forwarder yet: the Gateway keeps the local-only path.
-    expect(active(gateway)).toHaveLength(0)
-
-    const uninstall = control.installFederationForwarder(FORWARDER)
     expect(active(gateway)).toHaveLength(1)
     const router = active(gateway)[0]?.router
-    expect(router?.forwarder).toBe(FORWARDER)
+    // The forwarder is the control plane itself, and both carriers exist.
+    expect(typeof router?.forwarder.unary).toBe('function')
+    expect(typeof router?.forwarder.stream).toBe('function')
     expect(router?.hasInstance('alpha')).toBe(true)
     expect(router?.hasInstance('beta')).toBe(true)
     expect(router?.hasInstance('ghost')).toBe(false)
 
-    uninstall()
-    expect(active(gateway)).toHaveLength(0)
-    // Idempotent uninstall.
-    expect(() => { uninstall() }).not.toThrow()
+    // A second installation is still refused: exactly one transport owns routing.
+    expect(() => control.installFederationForwarder({
+      unary: async () => 'other',
+      stream: () => (async function * () { yield 'other' })(),
+    })).toThrow(/already installed/)
   })
 
-  it('never registers when federation.enabled=false, even with a forwarder', () => {
+  it('never registers when federation.enabled=false', () => {
     const gateway = gatewayStub()
     const control = new ControlPlane(stubContext(gateway), rawConfig({ enabled: false }))
 
-    const uninstall = control.installFederationForwarder(FORWARDER)
     expect(gateway.registrations).toHaveLength(0)
-    uninstall()
+    // Installing a transport cannot re-open the rollout switch.
+    expect(() => control.installFederationForwarder({
+      unary: async () => 'x',
+      stream: () => (async function * () { yield 'x' })(),
+    })).toThrow(/already installed/)
     expect(gateway.registrations).toHaveLength(0)
   })
 
   it('treats an absent federation config as enabled', () => {
     const gateway = gatewayStub()
-    const control = new ControlPlane(stubContext(gateway), rawConfig())
-    const uninstall = control.installFederationForwarder(FORWARDER)
+    new ControlPlane(stubContext(gateway), rawConfig())
     expect(active(gateway)).toHaveLength(1)
-    uninstall()
   })
 
   it('does not register without an active Gateway and still disposes cleanly', async () => {
     const control = new ControlPlane(stubContext(undefined), rawConfig({ enabled: true }))
-    expect(() => control.installFederationForwarder(FORWARDER)).not.toThrow()
+    expect(() => control.installFederationForwarder({
+      unary: async () => 'x',
+      stream: () => (async function * () { yield 'x' })(),
+    })).toThrow(/already installed/)
     await expect(control.dispose()).resolves.toBeUndefined()
   })
 
   it('detaches the router on plugin disposal and allows a re-install afterwards', async () => {
     const gateway = gatewayStub()
     const control = new ControlPlane(stubContext(gateway), rawConfig({ enabled: true }))
-
-    control.installFederationForwarder(FORWARDER)
     expect(active(gateway)).toHaveLength(1)
 
     await control.dispose()
     expect(active(gateway)).toHaveLength(0)
 
     // dispose() forgot the forwarder, so a fresh installation registers again.
-    const again = control.installFederationForwarder(FORWARDER)
+    const again = control.installFederationForwarder({
+      unary: async () => 'x',
+      stream: () => (async function * () { yield 'x' })(),
+    })
     expect(active(gateway)).toHaveLength(1)
     again()
     expect(active(gateway)).toHaveLength(0)
   })
 
-  it('rejects a second forwarder while one is installed', () => {
+  it('rejects a custom forwarder while its own is installed', () => {
     const gateway = gatewayStub()
     const control = new ControlPlane(stubContext(gateway), rawConfig({ enabled: true }))
-    const uninstall = control.installFederationForwarder(FORWARDER)
-    expect(() => control.installFederationForwarder(FORWARDER)).toThrow(/already installed/)
-    uninstall()
+    expect(() => control.installFederationForwarder({
+      unary: async () => 'x',
+      stream: () => (async function * () { yield 'x' })(),
+    })).toThrow(/already installed/)
   })
 })

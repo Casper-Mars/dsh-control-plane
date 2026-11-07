@@ -42,6 +42,23 @@ export interface InstanceConnection {
   createSession: (cwd: string) => Promise<string>
   /** Subscribes to session running-state changes. */
   onSessionStatus: (listener: (sessionId: string, running: boolean) => void) => () => void
+  /**
+   * Forwards one federated unary call; absent on a connection that cannot relay
+   * (a structural test double, not a live `Upstream`).
+   */
+  forwardUnary?: (
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal: AbortSignal,
+  ) => Promise<unknown>
+  /**
+   * Forwards one federated stream call; absent on a connection that cannot relay.
+   */
+  forwardStream?: (
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal: AbortSignal,
+  ) => AsyncIterable<unknown>
   /** Closes the connection. */
   dispose: () => Promise<void>
 }

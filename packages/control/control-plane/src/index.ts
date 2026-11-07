@@ -11,11 +11,12 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { FederationForwarder, FederationRouter } from '@deepseek-ai/dsh-api-gateway'
+import type { FederationForwarder, FederationRouter, FederationTarget } from '@deepseek-ai/dsh-api-gateway'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
-import { InstanceConnections } from './connections.ts'
+import { InstanceConnections, type InstanceConnection } from './connections.ts'
+import { instanceUnreachable } from './errors.ts'
 import { buildTree, qualify, split } from './tree.ts'
 import type {
   InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest, ReconnectValue, RouteRequest, RouteValue,
@@ -31,6 +32,9 @@ export type {
 export { InstanceConnections, DEFAULT_RETRY_INTERVAL_MS } from './connections.ts'
 export type { InstanceConnectionsOptions, OpenUpstream } from './connections.ts'
 export { Upstream } from './upstream.ts'
+/** The failure code a federated call gets when its instance cannot be reached. */
+export { instanceUnreachable } from './errors.ts'
+export { RemoteRelay } from './relay.ts'
 export { buildTree, qualify, split, NO_WORKSPACE } from './tree.ts'
 export { resolveInstances } from './config.ts'
 
@@ -108,6 +112,24 @@ export class ControlPlane extends TypertRemoteService {
         upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
       },
     })
+    // Federation transport: this control plane *is* the forwarder, so the
+    // router exists from the first tick. Registration itself still waits for a
+    // Gateway, and {@link attachFederationRouter} is retried below when the
+    // Gateway service arrives after this plugin.
+    this.installFederationForwarder({
+      unary: async (target, signal) => await this.forwardUnary(target, signal),
+      stream: (target, signal) => this.forwardStream(target, signal),
+    })
+    // A control-plane Host may list this plugin before the Gateway; the router
+    // then attaches on the service's arrival instead of staying silent.
+    // Structural test contexts supply no `inject`; a real Cordis Context does.
+    const inject = (ctx as unknown as { inject?: Context['inject'] }).inject
+    if (typeof inject === 'function') {
+      inject.call(ctx, ['typertGateway'], () => {
+        this.attachFederationRouter()
+        return () => { this.detachFederationRouter() }
+      })
+    }
     console.log('[control-plane] 插件已激活，实例数:', this.instances.length)
     // 调试：确认描述符是否已被 typert-loader 注册
     const typert = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
@@ -327,13 +349,60 @@ export class ControlPlane extends TypertRemoteService {
   }
 
   /**
-   * Install the outbound transport federation needs and, when the rollout
-   * switch allows it, register the Gateway router.
+   * Forward one unary call to the instance that owns it.
    *
-   * Registration is deliberately deferred until a forwarder exists: without
-   * one the Gateway must keep every call on the local path rather than
-   * forward into an unimplemented transport. The federation transport calls
-   * this once it can reach the configured instances.
+   * An instance without a live connection is refused here, before any carrier
+   * work: a federated call must fail fast instead of opening a connection the
+   * retry policy did not schedule.
+   * @param target - owning instance, endpoint, and prefix-free arguments.
+   * @param signal - cancellation of the inbound call.
+   * @returns the upstream business value.
+   * @throws RemoteError `control-plane/instance-unreachable` when the instance
+   *   is not connected, otherwise whatever the upstream answered.
+   */
+  private async forwardUnary(target: FederationTarget, signal: AbortSignal): Promise<unknown> {
+    const forward = this.relayFor(target)
+    if (forward.forwardUnary === undefined) throw instanceUnreachable(target.instanceId, target.endpoint)
+    return await forward.forwardUnary(target.endpoint, target.args, signal)
+  }
+
+  /**
+   * Forward one stream call to the instance that owns it.
+   * @param target - owning instance, endpoint, and prefix-free arguments.
+   * @param signal - cancellation of the inbound logical stream.
+   * @returns the upstream items.
+   * @throws RemoteError `control-plane/instance-unreachable` when the instance
+   *   is not connected.
+   */
+  private forwardStream(target: FederationTarget, signal: AbortSignal): AsyncIterable<unknown> {
+    const forward = this.relayFor(target)
+    if (forward.forwardStream === undefined) throw instanceUnreachable(target.instanceId, target.endpoint)
+    return forward.forwardStream(target.endpoint, target.args, signal)
+  }
+
+  /**
+   * The connection a federated call may use, or the failure that refuses it.
+   * @param target - owning instance and endpoint.
+   * @returns the connected upstream.
+   * @throws RemoteError `control-plane/instance-unreachable` when no connected
+   *   upstream exists for the instance.
+   */
+  private relayFor(target: FederationTarget): InstanceConnection {
+    const upstream = this.connections.get(target.instanceId)
+    if (upstream === undefined || upstream.reachability !== 'connected') {
+      throw instanceUnreachable(target.instanceId, target.endpoint)
+    }
+    return upstream
+  }
+
+  /**
+   * Install the transport federated calls travel on.
+   *
+   * The control plane installs its own relay at construction, so federation is
+   * available from the first tick; this stays public so a Host can substitute
+   * a transport and so a disposer can take one back. Registration itself still
+   * needs all three of the rollout switch, this transport, and a Gateway, which
+   * {@link attachFederationRouter} re-checks whenever one of them appears.
    * @param forwarder - unary and stream transport to other instances.
    * @returns disposer that detaches the router and forgets the forwarder.
    * @throws if a forwarder is already installed.
@@ -379,6 +448,8 @@ export class ControlPlane extends TypertRemoteService {
   /** Close every outbound connection and detach the federation router. */
   async dispose(): Promise<void> {
     this.stopPolling()
+    // Order matters: no inbound call may observe a half-closed set of
+    // connections, so the router goes first and the sockets after it.
     this.federationForwarder = undefined
     this.detachFederationRouter()
     await this.connections.dispose()

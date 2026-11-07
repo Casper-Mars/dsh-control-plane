@@ -9,6 +9,8 @@
     "src/index.ts",
     "src/config.ts",
     "src/connections.ts",
+    "src/errors.ts",
+    "src/relay.ts",
     "src/tree.ts",
     "src/upstream.ts",
     "src/types.ts"

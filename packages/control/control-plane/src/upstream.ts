@@ -4,13 +4,16 @@
  * Each instance gets its own Cordis root: the control plane's own host-side
  * services stay untouched, and one instance going away cannot dispose another.
  * The connection is the same client carrier a browser page uses, built for
- * Node (see `socket`/`rpc` seams below), with only the `session` Remote
- * namespace mounted — the sidebar needs nothing else yet.
+ * Node (see `socket`/`rpc` seams below). The `session` namespace is mounted at
+ * connect; `workspace` is mounted on the first federated call that needs it, so
+ * opening a connection never grows a second startup dependency.
  * @module @deepseek-ai/dsh-control-plane/src/upstream
  */
 
 import { Context } from '@deepseek-ai/cordis'
+import type { InvocationDescriptor, TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import type { ResolvedInstance } from './config.ts'
+import { RemoteRelay } from './relay.ts'
 import type { SessionRow } from './tree.ts'
 
 /*
@@ -41,7 +44,7 @@ interface GatewayClientModule {
 
 /** Minimal shape of a generated Remote contribution. */
 interface RemoteContributionModule {
-  default: unknown
+  default: TypertRemoteContribution
 }
 
 /** Minimal shape of the Typert registry plugin. */
@@ -72,6 +75,12 @@ export class Upstream {
   readonly instance: ResolvedInstance
   private readonly root: Context
   private mounted: (() => Promise<void>) | undefined
+  /** Descriptors of every mounted namespace, keyed by `<namespace>/<method>`. */
+  private readonly descriptors = new Map<string, InvocationDescriptor>()
+  /** In-flight lazy mount of the workspace namespace, if it was ever needed. */
+  private workspaceMount: Promise<void> | undefined
+  /** Forwards federated calls over this connection. */
+  private readonly relay: RemoteRelay
   private stopStatus: (() => void) | undefined
   private readonly statusListeners = new Set<(sessionId: string, running: boolean) => void>()
   private readonly running = new Map<string, boolean>()
@@ -81,6 +90,16 @@ export class Upstream {
   private constructor(instance: ResolvedInstance, root: Context) {
     this.instance = instance
     this.root = root
+    this.relay = new RemoteRelay({
+      instanceId: instance.id,
+      remote: () => (this.root as unknown as { remote?: unknown }).remote,
+      descriptor: endpoint => this.descriptorOf(endpoint),
+      mount: async (namespace) => { await this.mountNamespace(namespace) },
+      unreachable: (cause) => {
+        this.state = 'unreachable'
+        this.lastError = message(cause)
+      },
+    })
   }
 
   /**
@@ -129,6 +148,7 @@ export class Upstream {
         }
       }).remote
       upstream.mounted = await remote.$mount(session.default)
+      upstream.remember(session.default)
       // interactions=none 时没有事件通道；轮询 diff 负责状态变化（见 index.ts）
       const handle = (root as unknown as { connection: { interactions: 'none' | 'answer' } }).connection
       if (handle.interactions === 'answer') {
@@ -149,11 +169,94 @@ export class Upstream {
    * @param contribution - generated Remote descriptor.
    * @returns disposer.
    */
-  async mountRemote(contribution: unknown): Promise<() => Promise<void>> {
+  async mountRemote(contribution: TypertRemoteContribution): Promise<() => Promise<void>> {
     const remote = (this.root as unknown as {
       remote: { $mount: (value: unknown) => Promise<() => Promise<void>> }
     }).remote
-    return await remote.$mount(contribution)
+    const dispose = await remote.$mount(contribution)
+    this.remember(contribution)
+    return dispose
+  }
+
+  /**
+   * Record one contribution's descriptors so the relay can name its methods.
+   * @param contribution - generated Remote contribution mounted on this root.
+   */
+  private remember(contribution: TypertRemoteContribution): void {
+    for (const descriptor of contribution.descriptors) {
+      this.descriptors.set(`${descriptor.namespace}/${descriptor.method}`, descriptor)
+    }
+  }
+
+  /**
+   * Descriptor of one already-mounted endpoint.
+   * @param endpoint - canonical `<namespace>/<method>`.
+   * @returns the descriptor, or undefined when that namespace is not mounted.
+   */
+  private descriptorOf(endpoint: string): InvocationDescriptor | undefined {
+    return this.descriptors.get(endpoint)
+  }
+
+  /**
+   * Mount a namespace the first federated call to it needs.
+   *
+   * Only `workspace` is loadable lazily; every other namespace is either
+   * mounted at connect (`session`) or not federated at all. Concurrent first
+   * calls share one attempt. A failed attempt is forgotten so the next call
+   * can retry: a transient mount failure must not wedge the namespace for the
+   * lifetime of the connection.
+   * @param namespace - Remote namespace named by a forwarded endpoint.
+   */
+  private async mountNamespace(namespace: string): Promise<void> {
+    if (namespace !== 'workspace') return
+    const attempt = this.workspaceMount ??= (async () => {
+      const contribution = await load<RemoteContributionModule>('@deepseek-ai/dsh-api-workspace-controller/remote')
+      const remote = (this.root as unknown as {
+        remote: { $mount: (value: unknown) => Promise<() => Promise<void>> }
+      }).remote
+      await remote.$mount(contribution.default)
+      this.remember(contribution.default)
+    })()
+    try {
+      await attempt
+    } catch (error) {
+      // Clear only our own attempt: a later call may already have started a
+      // retry after this one settled.
+      if (this.workspaceMount === attempt) this.workspaceMount = undefined
+      throw error
+    }
+  }
+
+  /**
+   * Forward one federated unary call over this connection.
+   * @param endpoint - canonical `<namespace>/<method>`.
+   * @param args - wire arguments with the instance prefix stripped.
+   * @param signal - cancellation of the inbound call.
+   * @returns the upstream business value.
+   * @throws RemoteError with the upstream code, or
+   *   `control-plane/instance-unreachable` when the instance never answered.
+   */
+  async forwardUnary(
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    return await this.relay.unary(endpoint, args, signal)
+  }
+
+  /**
+   * Forward one federated stream call over this connection.
+   * @param endpoint - canonical `<namespace>/<method>`.
+   * @param args - wire arguments with the instance prefix stripped.
+   * @param signal - cancellation of the inbound logical stream.
+   * @returns the upstream items, cancelled with `signal`.
+   */
+  forwardStream(
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+    signal: AbortSignal,
+  ): AsyncIterable<unknown> {
+    return this.relay.stream(endpoint, args, signal)
   }
 
   /**

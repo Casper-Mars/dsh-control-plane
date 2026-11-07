@@ -51,6 +51,13 @@ class VerifySession extends Service {
     return `local:${sessionId}`
   }
 
+  /** One wrapped request object, the shape a generated Client sends. */
+  @Remote
+  cancel(request: { sessionId: string }): string {
+    this.calls.push(`cancel:${request.sessionId}`)
+    return `local-cancel:${request.sessionId}`
+  }
+
   @Remote
   ping(): string {
     this.calls.push('<ping>')
@@ -228,7 +235,7 @@ function rawText(data: RawData): string {
 // ---------------------------------------------------------------------------
 
 describe('1. HTTP unary federation without any local session/workspace descriptor', () => {
-  it('admits session/list, forwards stripped args, and never runs a local method', async () => {
+  it('admits session/cancel, forwards stripped args, and never runs a local method', async () => {
     const ctx = await setupControlPlaneHost()
     const probe = makeProbe(['inst-a'])
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
@@ -238,20 +245,22 @@ describe('1. HTTP unary federation without any local session/workspace descripto
       // before the fix.
       expect(ctx.get('verifySession')).toBeUndefined()
 
-      const body = await postRpc(ctx, 'session/list', { sessionId: 'inst-a:s-1' }, 'fed-claim-http')
+      const body = await postRpc(ctx, 'session/cancel', {
+        request: { sessionId: 'inst-a:s-1' },
+      }, 'fed-claim-http')
       expect(body).toEqual({
         type: 'server-response',
         rpcId: 'fed-claim-http',
         result: {
           ok: true,
-          value: { forwarded: true, instanceId: 'inst-a', args: { sessionId: 's-1' } },
+          value: { forwarded: true, instanceId: 'inst-a', args: { request: { sessionId: 's-1' } } },
         },
       })
       expect(probe.unary).toHaveLength(1)
       expect(probe.unary[0]?.target).toEqual({
         instanceId: 'inst-a',
-        endpoint: 'session/list',
-        args: { sessionId: 's-1' },
+        endpoint: 'session/cancel',
+        args: { request: { sessionId: 's-1' } },
       })
       expect(probe.unary[0]?.signal).toBeInstanceOf(AbortSignal)
     } finally {
@@ -259,7 +268,7 @@ describe('1. HTTP unary federation without any local session/workspace descripto
     }
   })
 
-  it('admits workspace/read through the workspaceId key', async () => {
+  it('admits workspace/rename through the workspaceId key', async () => {
     const ctx = await setupControlPlaneHost()
     const probe = makeProbe(['inst-a'])
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
@@ -267,20 +276,26 @@ describe('1. HTTP unary federation without any local session/workspace descripto
     try {
       expect(ctx.get('verifyWorkspace')).toBeUndefined()
 
-      const body = await postRpc(ctx, 'workspace/read', { workspaceId: 'inst-a:/repo' }, 'fed-claim-ws')
+      const body = await postRpc(ctx, 'workspace/rename', {
+        request: { workspaceId: 'inst-a:/repo', title: 'renamed' },
+      }, 'fed-claim-ws')
       expect(body).toEqual({
         type: 'server-response',
         rpcId: 'fed-claim-ws',
         result: {
           ok: true,
-          value: { forwarded: true, instanceId: 'inst-a', args: { workspaceId: '/repo' } },
+          value: {
+            forwarded: true,
+            instanceId: 'inst-a',
+            args: { request: { workspaceId: '/repo', title: 'renamed' } },
+          },
         },
       })
       expect(probe.unary).toHaveLength(1)
       expect(probe.unary[0]?.target).toEqual({
         instanceId: 'inst-a',
-        endpoint: 'workspace/read',
-        args: { workspaceId: '/repo' },
+        endpoint: 'workspace/rename',
+        args: { request: { workspaceId: '/repo', title: 'renamed' } },
       })
     } finally {
       dispose()
@@ -293,26 +308,26 @@ describe('1. HTTP unary federation without any local session/workspace descripto
 // ---------------------------------------------------------------------------
 
 describe('2. regression around the claims change', () => {
-  it.each(['session/list', 'workspace/read'])(
+  it.each(['session/cancel', 'workspace/rename'])(
     'still answers 404 for %s when no router is registered',
     async (endpoint) => {
       const ctx = await setupControlPlaneHost()
       const args = endpoint.startsWith('session')
-        ? { sessionId: 'inst-a:s-1' }
-        : { workspaceId: 'inst-a:/repo' }
+        ? { request: { sessionId: 'inst-a:s-1' } }
+        : { request: { workspaceId: 'inst-a:/repo', title: 'renamed' } }
 
       const response = await httpPost(ctx, endpoint, args, 'fed-no-router')
       expect(response.status).toBe(404)
     },
   )
 
-  it('still answers 404 for a non-whitelisted endpoint with a prefixed argument', async () => {
+  it('still answers 404 for an endpoint outside the federation table with a prefixed argument', async () => {
     const ctx = await setupControlPlaneHost()
     const probe = makeProbe(['inst-a'])
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
 
     try {
-      // `goals` is not a federated namespace: the router must not widen claims.
+      // `goals` is not federated: the router must not widen claims.
       const response = await httpPost(ctx, 'goals/list', { sessionId: 'inst-a:s-1' }, 'fed-goals')
       expect(response.status).toBe(404)
       expect(probe.unary).toHaveLength(0)
@@ -321,13 +336,13 @@ describe('2. regression around the claims change', () => {
     }
   })
 
-  it('reaches local resolution — not a claims 404 — for a prefix-free session/list', async () => {
+  it('reaches local resolution — not a claims 404 — for a prefix-free session/cancel', async () => {
     const ctx = await setupControlPlaneHost()
     const probe = makeProbe(['inst-a'])
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
 
     try {
-      const body = await postRpc(ctx, 'session/list', { sessionId: 's-1' }, 'fed-local-miss')
+      const body = await postRpc(ctx, 'session/cancel', { request: { sessionId: 's-1' } }, 'fed-local-miss')
       // The claims layer admitted the endpoint; the failure is the ordinary
       // descriptor-missing error, which is a predictable 200 + rpcFailure.
       expect(body).toMatchObject({
@@ -337,7 +352,7 @@ describe('2. regression around the claims change', () => {
           ok: false,
           error: {
             code: 'gateway/invocation-unavailable',
-            details: { endpoint: 'session/list' },
+            details: { endpoint: 'session/cancel' },
           },
         },
       })
@@ -356,8 +371,8 @@ describe('2. regression around the claims change', () => {
       await expect(ctx.typertGateway.invoke({
         peer: peerFor(ctx, { kind: 'verify-federation-guest' }),
         namespace: 'session',
-        method: 'list',
-        args: { sessionId: 'inst-a:s-1' },
+        method: 'cancel',
+        args: { request: { sessionId: 'inst-a:s-1' } },
       })).rejects.toMatchObject({ code: 'remote-access/denied' })
       expect(probe.unary).toHaveLength(0)
       expect(sessions.calls).toEqual([])
@@ -378,8 +393,8 @@ describe('2. regression around the claims change', () => {
       await expect(ctx.typertGateway.invoke({
         peer: peerFor(ctx, { kind: 'verify-federation-guest' }),
         namespace: 'session',
-        method: 'list',
-        args: { sessionId: 'inst-a:s-1' },
+        method: 'cancel',
+        args: { request: { sessionId: 'inst-a:s-1' } },
       })).rejects.toMatchObject({ code: 'gateway/invocation-unavailable' })
       expect(probe.unary).toHaveLength(0)
     } finally {
@@ -392,12 +407,16 @@ describe('2. regression around the claims change', () => {
     const probe = makeProbe(['inst-a'])
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    const admitted = await httpPost(ctx, 'session/list', { sessionId: 'inst-a:s-1' }, 'fed-before-dispose')
+    const admitted = await httpPost(ctx, 'session/cancel', {
+      request: { sessionId: 'inst-a:s-1' },
+    }, 'fed-before-dispose')
     expect(admitted.status).toBe(200)
 
     dispose()
 
-    const rejected = await httpPost(ctx, 'session/list', { sessionId: 'inst-a:s-1' }, 'fed-after-dispose')
+    const rejected = await httpPost(ctx, 'session/cancel', {
+      request: { sessionId: 'inst-a:s-1' },
+    }, 'fed-after-dispose')
     expect(rejected.status).toBe(404)
     expect(probe.unary).toHaveLength(1)
   })
@@ -421,20 +440,26 @@ describe('3. WebSocket stream carrier', () => {
       const frames: Record<string, unknown>[] = []
       socket.on('message', (data) => { frames.push(JSON.parse(rawText(data)) as Record<string, unknown>) })
 
-      sendOpen(socket, 'fed-stream', 'session/observeEvent', { sessionId: 'inst-a:s-7' })
+      sendOpen(socket, 'fed-stream', 'session/observeEvent', {
+        request: { address: { kind: 'session', sessionId: 'inst-a:s-7' } },
+      })
 
       await vi.waitFor(() => {
         expect(frames).toContainEqual({
           type: 'item',
           streamId: 'fed-stream',
-          value: { instanceId: 'inst-a', endpoint: 'session/observeEvent', args: { sessionId: 's-7' } },
+          value: {
+            instanceId: 'inst-a',
+            endpoint: 'session/observeEvent',
+            args: { request: { address: { kind: 'session', sessionId: 's-7' } } },
+          },
         })
       })
       expect(probe.stream).toHaveLength(1)
       expect(probe.stream[0]?.target).toEqual({
         instanceId: 'inst-a',
         endpoint: 'session/observeEvent',
-        args: { sessionId: 's-7' },
+        args: { request: { address: { kind: 'session', sessionId: 's-7' } } },
       })
       expect(probe.stream[0]?.signal.aborted).toBe(false)
 
@@ -456,39 +481,30 @@ describe('3. WebSocket stream carrier', () => {
 
 describe('4. no privilege widening and predictable failures', () => {
   it.each([
-    ['session/xxx', { sessionId: 's-1' }, 'session/xxx'],
-    ['workspace/xxx', { workspaceId: '/repo' }, 'workspace/xxx'],
+    ['session/xxx', { sessionId: 's-1' }],
+    ['workspace/xxx', { workspaceId: '/repo' }],
   ] as const)(
-    'does not forward a prefix-free unknown endpoint %s and fails predictably',
-    async (endpoint, args, expectedEndpoint) => {
+    'does not claim or forward an unknown endpoint %s',
+    async (endpoint, args) => {
       const ctx = await setupControlPlaneHost()
       const probe = makeProbe(['inst-a'])
       const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
 
       try {
-        const body = await postRpc(ctx, endpoint, args, 'fed-unknown')
-
-        // Exactly one well-formed envelope: 200 with rpcFailure, no crash.
-        expect(body).toStrictEqual({
-          type: 'server-response',
-          rpcId: 'fed-unknown',
-          result: {
-            ok: false,
-            error: {
-              code: 'gateway/invocation-unavailable',
-              message: `typert gateway: ${expectedEndpoint}: no active Remote method exports this endpoint`,
-              details: { endpoint: expectedEndpoint },
-            },
-          },
-        })
+        // Outside the identifier table: not claimed, so the carrier answers 404
+        // and the forwarder is never reached.
+        const response = await httpPost(ctx, endpoint, args, 'fed-unknown')
+        expect(response.status).toBe(404)
         expect(probe.unary).toHaveLength(0)
         expect(probe.stream).toHaveLength(0)
 
         // The Gateway is still serving: a legitimate call after the unknown
         // one still forwards.
-        const next = await postRpc(ctx, 'session/list', { sessionId: 'inst-a:s-2' }, 'fed-after-unknown')
+        const next = await postRpc(ctx, 'session/cancel', {
+          request: { sessionId: 'inst-a:s-2' },
+        }, 'fed-after-unknown')
         expect(next).toMatchObject({
-          result: { ok: true, value: { instanceId: 'inst-a', args: { sessionId: 's-2' } } },
+          result: { ok: true, value: { instanceId: 'inst-a', args: { request: { sessionId: 's-2' } } } },
         })
         expect(probe.unary).toHaveLength(1)
       } finally {
@@ -517,10 +533,8 @@ describe('4. no privilege widening and predictable failures', () => {
     const dispose = ctx.typertGateway.registerFederationRouter(probe.router)
 
     try {
-      const body = await postRpc(ctx, 'session/xxx', { sessionId: 'ghost:s-1' }, 'fed-unknown-ghost')
-      expect(body).toMatchObject({
-        result: { ok: false, error: { code: 'gateway/invocation-unavailable' } },
-      })
+      const response = await httpPost(ctx, 'session/xxx', { sessionId: 'ghost:s-1' }, 'fed-unknown-ghost')
+      expect(response.status).toBe(404)
       expect(probe.unary).toHaveLength(0)
     } finally {
       dispose()

@@ -2,9 +2,9 @@
  * Control-plane federation rollout switch.
  *
  * These specs use a stubbed Gateway only: they assert when the control plane
- * registers a router, not how a call is forwarded. The forwarder itself is
- * supplied by the federation transport; this milestone must never fake one,
- * so nothing is registered until `installFederationForwarder` is called.
+ * registers a router, not how a call is forwarded. Since t100637 the control
+ * plane is its own forwarder, so construction installs the transport and the
+ * switch below decides only whether the Gateway may route to it.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { FederationForwarder, FederationRouter } from '@deepseek-ai/dsh-api-gateway'
@@ -73,47 +73,48 @@ function active(probe: GatewayProbe): RouterEntry[] {
 }
 
 describe('control-plane federation switch', () => {
-  it('registers a router when federation is enabled by default', () => {
+  it('registers a router, carrying its own forwarder, when federation is enabled by default', () => {
     const gateway = gatewayProbe()
-    const control = new ControlPlane(fakeContext(gateway), config())
-    const uninstall = control.installFederationForwarder(FORWARDER)
+    new ControlPlane(fakeContext(gateway), config())
 
     expect(active(gateway)).toHaveLength(1)
     const router = active(gateway)[0]?.router
     expect(router?.hasInstance('alpha')).toBe(true)
     expect(router?.hasInstance('beta')).toBe(true)
     expect(router?.hasInstance('ghost')).toBe(false)
-    expect(router?.forwarder).toBe(FORWARDER)
-    uninstall()
+    // The transport belongs to the control plane: both carriers are callable.
+    expect(typeof router?.forwarder.unary).toBe('function')
+    expect(typeof router?.forwarder.stream).toBe('function')
   })
 
   it('never registers a router when federation is disabled', () => {
     const gateway = gatewayProbe()
     const control = new ControlPlane(fakeContext(gateway), config({ enabled: false }))
-    const uninstall = control.installFederationForwarder(FORWARDER)
 
     expect(gateway.entries).toHaveLength(0)
-    uninstall()
+    // The rollout switch is not re-openable by installing another transport.
+    expect(() => control.installFederationForwarder(FORWARDER)).toThrow(/already installed/)
+    expect(gateway.entries).toHaveLength(0)
   })
 
-  it('does not register without an active Gateway', () => {
+  it('does not register without an active Gateway, and disposes cleanly', async () => {
     const control = new ControlPlane(fakeContext(undefined), config({ enabled: true }))
-    expect(() => control.installFederationForwarder(FORWARDER)).not.toThrow()
+    await expect(control.dispose()).resolves.toBeUndefined()
   })
 
-  it('detaches the router on uninstall and on plugin disposal', async () => {
+  it('detaches the router on plugin disposal and re-registers after a fresh install', async () => {
     const gateway = gatewayProbe()
     const control = new ControlPlane(fakeContext(gateway), config({ enabled: true }))
-    const uninstall = control.installFederationForwarder(FORWARDER)
     expect(active(gateway)).toHaveLength(1)
 
-    uninstall()
-    expect(active(gateway)).toHaveLength(0)
-
-    const again = control.installFederationForwarder(FORWARDER)
-    expect(active(gateway)).toHaveLength(1)
     await control.dispose()
     expect(active(gateway)).toHaveLength(0)
+
+    // dispose() forgot the transport, so an explicit installation registers again.
+    const again = control.installFederationForwarder(FORWARDER)
+    expect(active(gateway)).toHaveLength(1)
+    expect(active(gateway)[0]?.router.forwarder).toBe(FORWARDER)
     again()
+    expect(active(gateway)).toHaveLength(0)
   })
 })

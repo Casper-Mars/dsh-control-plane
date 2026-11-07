@@ -426,10 +426,11 @@ export class TypertGatewayService extends Service implements TypertGateway {
     const segments = endpoint.split('/')
     if (segments.length !== 2 || segments[0] === '' || segments[1] === '') return false
     // A control-plane Host mounts none of the descriptors it fronts. While a
-    // router is registered, a whitelisted namespace is therefore claimed on
-    // the endpoint alone; the call then reaches `prepareInvocation`, which
-    // still decides from the identifier prefix whether to forward it or fall
-    // through to ordinary local resolution.
+    // router is registered, an endpoint declared in the federation identifier
+    // table is therefore claimed on the endpoint alone; the call then reaches
+    // `prepareInvocation`, which still decides from the identifier prefix
+    // whether to forward it or fall through to ordinary local resolution.
+    // Endpoints outside that table are never claimed for federation.
     if (this.federationRouter !== undefined && isFederatedEndpoint(endpoint)) return true
     if (this.ctx.typert.local.get(endpoint) !== undefined || this.ctx.typert.local.hasSeen(endpoint)) return true
     this.srcClaims ??= this.collectSrcClaims()
@@ -857,12 +858,13 @@ export class TypertGatewayService extends Service implements TypertGateway {
    * the owning instance's descriptors or business Services.
    *
    * Reaching this point is carrier-dependent. The HTTP carrier first asks
-   * `claimsEndpoint()`, which claims a two-segment `session`/`workspace`
-   * endpoint whenever a router is registered, so an unmounted descriptor is no
-   * longer a 404 on that path. The WebSocket mux never consulted claims, so the
-   * same unmounted endpoint already arrives. Both paths then rely on the
-   * decision below: an unconfigured or unprefixed identifier falls through to
-   * local descriptor resolution and its ordinary error.
+   * `claimsEndpoint()`, which claims an endpoint named in the federation
+   * identifier table whenever a router is registered, so an unmounted
+   * descriptor is no longer a 404 on that path. The WebSocket mux never
+   * consulted claims, so the same unmounted endpoint already arrives. Both
+   * paths then rely on the decision below: an unconfigured or unprefixed
+   * identifier falls through to local descriptor resolution and its ordinary
+   * error.
    *
    * `control` fails the logical stream when an uplink item is rejected; unary
    * calls hand over an inert one. `stream` selects the signal shape a

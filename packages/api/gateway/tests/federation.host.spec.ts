@@ -47,6 +47,13 @@ class LocalSessionService extends Service {
     this.calls.push('<ping>')
     return 'pong'
   }
+
+  /** One wrapped request object, the shape a generated Client sends. */
+  @Remote
+  cancel(request: { sessionId: string }): string {
+    this.calls.push(`cancel:${request.sessionId}`)
+    return `local-cancel:${request.sessionId}`
+  }
 }
 
 /** Local `workspace` namespace, so a missing instance also falls through here. */
@@ -62,6 +69,13 @@ class LocalWorkspaceService extends Service {
   read(workspaceId: string): string {
     this.calls.push(workspaceId)
     return `local:${workspaceId}`
+  }
+
+  /** One wrapped request object naming a workspace and a sibling field. */
+  @Remote
+  rename(request: { workspaceId: string; title: string }): string {
+    this.calls.push(`rename:${request.workspaceId}`)
+    return `local-rename:${request.workspaceId}`
   }
 }
 
@@ -111,7 +125,14 @@ function federationProbe(instances: readonly string[]): {
         },
         stream(target, signal) {
           stream.push({ target, signal })
-          const localId = String(target.args.sessionId ?? target.args.workspaceId)
+          const request = target.args.request as {
+            readonly address?: { readonly sessionId?: unknown }
+            readonly sessionId?: unknown
+            readonly workspaceId?: unknown
+          } | undefined
+          const localId = String(
+            request?.address?.sessionId ?? request?.sessionId ?? target.args.sessionId ?? target.args.workspaceId,
+          )
           return (async function * () {
             yield `${target.instanceId}|${target.endpoint}|${localId}`
           })()
@@ -155,18 +176,19 @@ function unaryRequest(ctx: Context, namespace: string, method: string, args: Rec
 }
 
 describe('federation routing', () => {
-  it('forwards a whitelisted unary call and strips the instance prefix', async () => {
+  it('forwards a table-listed unary call and strips the instance prefix', async () => {
     const { ctx, sessions } = await setup()
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId: 'alpha:s-1' })))
-      .resolves.toEqual({ forwarded: true, instanceId: 'alpha', args: { sessionId: 's-1' } })
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'alpha:s-1' },
+    }))).resolves.toEqual({ forwarded: true, instanceId: 'alpha', args: { request: { sessionId: 's-1' } } })
     expect(probe.unary).toHaveLength(1)
     expect(probe.unary[0]?.target).toEqual({
       instanceId: 'alpha',
-      endpoint: 'session/list',
-      args: { sessionId: 's-1' },
+      endpoint: 'session/cancel',
+      args: { request: { sessionId: 's-1' } },
     })
     expect(probe.unary[0]?.signal).toBeInstanceOf(AbortSignal)
     // Descriptor resolution and the local method are never reached.
@@ -179,19 +201,21 @@ describe('federation routing', () => {
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId: 'alpha:s-1:tail' })))
-      .resolves.toMatchObject({ args: { sessionId: 's-1:tail' } })
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'alpha:s-1:tail' },
+    }))).resolves.toMatchObject({ args: { request: { sessionId: 's-1:tail' } } })
     expect(probe.unary[0]?.target.instanceId).toBe('alpha')
     disposer()
   })
 
-  it('routes workspace calls through workspaceId only', async () => {
+  it('routes a workspace call through its workspaceId', async () => {
     const { ctx, workspaces } = await setup()
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'workspace', 'read', { workspaceId: 'alpha:/repo' })))
-      .resolves.toMatchObject({ instanceId: 'alpha', args: { workspaceId: '/repo' } })
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'workspace', 'rename', {
+      request: { workspaceId: 'alpha:/repo', title: 'renamed' },
+    }))).resolves.toMatchObject({ instanceId: 'alpha', args: { request: { workspaceId: '/repo' } } })
     expect(workspaces.calls).toEqual([])
     disposer()
   })
@@ -203,15 +227,17 @@ describe('federation routing', () => {
 
     const values: unknown[] = []
     for await (const value of await ctx.typertGateway.stream(
-      unaryRequest(ctx, 'session', 'tail', { sessionId: 'alpha:s-9' }),
+      unaryRequest(ctx, 'session', 'follow', {
+        request: { address: { kind: 'session', sessionId: 'alpha:s-9' } },
+      }),
     )) values.push(value)
 
-    expect(values).toEqual(['alpha|session/tail|s-9'])
+    expect(values).toEqual(['alpha|session/follow|s-9'])
     expect(probe.stream).toHaveLength(1)
     expect(probe.stream[0]?.target).toEqual({
       instanceId: 'alpha',
-      endpoint: 'session/tail',
-      args: { sessionId: 's-9' },
+      endpoint: 'session/follow',
+      args: { request: { address: { kind: 'session', sessionId: 's-9' } } },
     })
     disposer()
   })
@@ -223,8 +249,8 @@ describe('federation routing', () => {
 
     async function * empty(): AsyncIterable<unknown> { /* no uplink in this fixture */ }
     const opened = await ctx.typertGateway.wireStream.open(
-      'workspace/read',
-      { args: { workspaceId: 'alpha:/repo' } },
+      'session/follow',
+      { args: { request: { address: { kind: 'session', sessionId: 'alpha:s-9' } } } },
       empty(),
       ownerPeer(ctx),
       new AbortController().signal,
@@ -232,12 +258,12 @@ describe('federation routing', () => {
     const values: unknown[] = []
     for await (const value of opened) values.push(value)
 
-    expect(values).toEqual(['alpha|workspace/read|/repo'])
+    expect(values).toEqual(['alpha|session/follow|s-9'])
     expect(probe.stream).toHaveLength(1)
     expect(probe.stream[0]?.target).toEqual({
       instanceId: 'alpha',
-      endpoint: 'workspace/read',
-      args: { workspaceId: '/repo' },
+      endpoint: 'session/follow',
+      args: { request: { address: { kind: 'session', sessionId: 's-9' } } },
     })
     disposer()
   })
@@ -247,14 +273,15 @@ describe('federation routing', () => {
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId: 'ghost:s-1' })))
-      .resolves.toBe('local:ghost:s-1')
-    expect(sessions.calls).toEqual(['ghost:s-1'])
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'ghost:s-1' },
+    }))).resolves.toBe('local-cancel:ghost:s-1')
+    expect(sessions.calls).toEqual(['cancel:ghost:s-1'])
     expect(probe.unary).toEqual([])
     disposer()
   })
 
-  it('passes through non-whitelisted endpoints even when an id has a prefix', async () => {
+  it('passes through endpoints outside the federation table even with an id prefix', async () => {
     const { ctx, goals } = await setup()
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
@@ -267,14 +294,83 @@ describe('federation routing', () => {
     disposer()
   })
 
-  it('passes through when the namespace id argument is absent', async () => {
+  it('forwards the wrapped request object a generated Client sends', async () => {
     const { ctx, sessions } = await setup()
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'ping', {})))
-      .resolves.toBe('pong')
-    expect(sessions.calls).toEqual(['<ping>'])
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'alpha:s-1' },
+    }))).resolves.toEqual({
+      forwarded: true,
+      instanceId: 'alpha',
+      args: { request: { sessionId: 's-1' } },
+    })
+    // Stripping happens at the route the identifier occupies, and the sibling
+    // `request` wrapper survives for the upstream Client's own codecs.
+    expect(probe.unary[0]?.target).toEqual({
+      instanceId: 'alpha',
+      endpoint: 'session/cancel',
+      args: { request: { sessionId: 's-1' } },
+    })
+    expect(sessions.calls).toEqual([])
+    disposer()
+  })
+
+  it('forwards a wrapped workspace request without flattening its siblings', async () => {
+    const { ctx, workspaces } = await setup()
+    const probe = federationProbe(['alpha'])
+    const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
+
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'workspace', 'rename', {
+      request: { workspaceId: 'alpha:/repo', title: 'renamed' },
+    }))).resolves.toMatchObject({
+      instanceId: 'alpha',
+      args: { request: { workspaceId: '/repo', title: 'renamed' } },
+    })
+    expect(workspaces.calls).toEqual([])
+    disposer()
+  })
+
+  it('forwards a wrapped session stream call', async () => {
+    const { ctx } = await setup()
+    const probe = federationProbe(['alpha'])
+    const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
+
+    const values: unknown[] = []
+    for await (const value of await ctx.typertGateway.stream(unaryRequest(ctx, 'session', 'follow', {
+      request: { address: { kind: 'session', sessionId: 'alpha:s-1' }, activate: true },
+    }))) values.push(value)
+
+    expect(values).toHaveLength(1)
+    expect(probe.stream[0]?.target.args).toEqual({
+      request: { address: { kind: 'session', sessionId: 's-1' }, activate: true },
+    })
+    disposer()
+  })
+
+  it('passes through a wrapped request whose instance is not configured', async () => {
+    const { ctx, sessions } = await setup()
+    const probe = federationProbe(['alpha'])
+    const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
+
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'ghost:s-1' },
+    }))).resolves.toBe('local-cancel:ghost:s-1')
+    expect(sessions.calls).toEqual(['cancel:ghost:s-1'])
+    expect(probe.unary).toEqual([])
+    disposer()
+  })
+
+  it('passes through when the identifier carries no instance prefix', async () => {
+    const { ctx, sessions } = await setup()
+    const probe = federationProbe(['alpha'])
+    const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
+
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 's-1' },
+    }))).resolves.toBe('local-cancel:s-1')
+    expect(sessions.calls).toEqual(['cancel:s-1'])
     expect(probe.unary).toEqual([])
     disposer()
   })
@@ -289,9 +385,10 @@ describe('federation routing', () => {
     const probe = federationProbe(['alpha'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId })))
-      .resolves.toBe(`local:${sessionId}`)
-    expect(sessions.calls).toEqual([sessionId])
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId },
+    }))).resolves.toBe(`local-cancel:${sessionId}`)
+    expect(sessions.calls).toEqual([`cancel:${sessionId}`])
     expect(probe.unary).toEqual([])
     disposer()
   })
@@ -305,8 +402,8 @@ describe('federation routing', () => {
     await expect(ctx.typertGateway.invoke({
       peer: guest,
       namespace: 'session',
-      method: 'list',
-      args: { sessionId: 'alpha:s-1' },
+      method: 'cancel',
+      args: { request: { sessionId: 'alpha:s-1' } },
     })).rejects.toMatchObject({ code: 'remote-access/denied' })
     expect(probe.unary).toEqual([])
     expect(sessions.calls).toEqual([])
@@ -323,14 +420,16 @@ describe('federation routing', () => {
       .toThrow(/already registered/)
 
     disposer()
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId: 'alpha:s-1' })))
-      .resolves.toBe('local:alpha:s-1')
-    expect(sessions.calls).toEqual(['alpha:s-1'])
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'alpha:s-1' },
+    }))).resolves.toBe('local-cancel:alpha:s-1')
+    expect(sessions.calls).toEqual(['cancel:alpha:s-1'])
 
     // The slot is free again: a later router takes effect.
     const replacement = ctx.typertGateway.registerFederationRouter(second.router)
-    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'list', { sessionId: 'beta:s-2' })))
-      .resolves.toMatchObject({ instanceId: 'beta', args: { sessionId: 's-2' } })
+    await expect(ctx.typertGateway.invoke(unaryRequest(ctx, 'session', 'cancel', {
+      request: { sessionId: 'beta:s-2' },
+    }))).resolves.toMatchObject({ instanceId: 'beta', args: { request: { sessionId: 's-2' } } })
     replacement()
   })
 })
@@ -381,18 +480,18 @@ describe('federation claims on a descriptor-less control-plane Host', () => {
     const probe = federationProbe(['inst-a'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    const response = await httpPost(ctx, 'session/list', { sessionId: 'inst-a:s-1' }, 'fed-claim')
+    const response = await httpPost(ctx, 'session/cancel', { request: { sessionId: 'inst-a:s-1' } }, 'fed-claim')
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       type: 'server-response',
       rpcId: 'fed-claim',
-      result: { ok: true, value: { forwarded: true, instanceId: 'inst-a', args: { sessionId: 's-1' } } },
+      result: { ok: true, value: { forwarded: true, instanceId: 'inst-a', args: { request: { sessionId: 's-1' } } } },
     })
     expect(probe.unary).toHaveLength(1)
     expect(probe.unary[0]?.target).toEqual({
       instanceId: 'inst-a',
-      endpoint: 'session/list',
-      args: { sessionId: 's-1' },
+      endpoint: 'session/cancel',
+      args: { request: { sessionId: 's-1' } },
     })
     disposer()
   })
@@ -402,12 +501,17 @@ describe('federation claims on a descriptor-less control-plane Host', () => {
     const probe = federationProbe(['inst-a'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    const response = await httpPost(ctx, 'workspace/read', { workspaceId: 'inst-a:/repo' }, 'fed-claim-ws')
+    const response = await httpPost(ctx, 'workspace/rename', {
+      request: { workspaceId: 'inst-a:/repo', title: 'renamed' },
+    }, 'fed-claim-ws')
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       type: 'server-response',
       rpcId: 'fed-claim-ws',
-      result: { ok: true, value: { forwarded: true, instanceId: 'inst-a', args: { workspaceId: '/repo' } } },
+      result: {
+        ok: true,
+        value: { forwarded: true, instanceId: 'inst-a', args: { request: { workspaceId: '/repo', title: 'renamed' } } },
+      },
     })
     expect(probe.unary).toHaveLength(1)
     disposer()
@@ -416,7 +520,7 @@ describe('federation claims on a descriptor-less control-plane Host', () => {
   it('still answers 404 without a router, exactly as before', async () => {
     const ctx = await setupControlPlaneHost()
 
-    const response = await httpPost(ctx, 'session/list', { sessionId: 'inst-a:s-1' }, 'fed-claim-none')
+    const response = await httpPost(ctx, 'session/cancel', { request: { sessionId: 'inst-a:s-1' } }, 'fed-claim-none')
     expect(response.status).toBe(404)
   })
 
@@ -436,7 +540,7 @@ describe('federation claims on a descriptor-less control-plane Host', () => {
     const probe = federationProbe(['inst-a'])
     const disposer = ctx.typertGateway.registerFederationRouter(probe.router)
 
-    const response = await httpPost(ctx, 'session/list', { sessionId: 's-1' }, 'fed-claim-local')
+    const response = await httpPost(ctx, 'session/cancel', { request: { sessionId: 's-1' } }, 'fed-claim-local')
     expect(response.status).toBe(200)
     const body: unknown = await response.json()
     expect(body).toMatchObject({
