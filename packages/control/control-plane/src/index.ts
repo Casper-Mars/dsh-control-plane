@@ -11,6 +11,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { FederationForwarder, FederationRouter } from '@deepseek-ai/dsh-api-gateway'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
@@ -42,6 +43,9 @@ export const Config: z<RawConfig> = z.object({
     port: z.natural().required(),
     token: z.string(),
   })).required(),
+  federation: z.object({
+    enabled: z.boolean().default(true),
+  }),
 })
 
 declare module '@deepseek-ai/cordis' {
@@ -63,6 +67,15 @@ export class ControlPlane extends TypertRemoteService {
 
   /** Outbound connections, reachability, and the retry policy. */
   private readonly connections: InstanceConnections
+
+  /** Whether prefixed calls may cross instance boundaries; false is local-only. */
+  private readonly federationEnabled: boolean
+
+  /** Outbound transport, installed once federation can reach other instances. */
+  private federationForwarder: FederationForwarder | undefined
+
+  /** Disposer of the router currently registered on the Gateway. */
+  private disposeFederationRouter: (() => void) | undefined
 
   /** Session running state per instance, fed by forwarded events. */
   private readonly running = new Map<string, Map<string, boolean>>()
@@ -88,6 +101,7 @@ export class ControlPlane extends TypertRemoteService {
   constructor(ctx: Context, config: RawConfig) {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
     this.instances = resolveInstances(config)
+    this.federationEnabled = config.federation?.enabled !== false
     this.connections = new InstanceConnections(this.instances, {
       open: async (instance, transport) => await Upstream.connect(instance, transport),
       attach: (instance, upstream) => {
@@ -312,9 +326,61 @@ export class ControlPlane extends TypertRemoteService {
     return qualify(instanceId, await upstream.createSession(cwd))
   }
 
-  /** Close every outbound connection. */
+  /**
+   * Install the outbound transport federation needs and, when the rollout
+   * switch allows it, register the Gateway router.
+   *
+   * Registration is deliberately deferred until a forwarder exists: without
+   * one the Gateway must keep every call on the local path rather than
+   * forward into an unimplemented transport. The federation transport calls
+   * this once it can reach the configured instances.
+   * @param forwarder - unary and stream transport to other instances.
+   * @returns disposer that detaches the router and forgets the forwarder.
+   * @throws if a forwarder is already installed.
+   */
+  installFederationForwarder(forwarder: FederationForwarder): () => void {
+    if (this.federationForwarder !== undefined) {
+      throw new Error('control-plane: federation forwarder is already installed')
+    }
+    this.federationForwarder = forwarder
+    this.attachFederationRouter()
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      if (this.federationForwarder !== forwarder) return
+      this.federationForwarder = undefined
+      this.detachFederationRouter()
+    }
+  }
+
+  /** Register the router once the switch, the Gateway, and a forwarder all exist. */
+  private attachFederationRouter(): void {
+    if (!this.federationEnabled) return
+    const forwarder = this.federationForwarder
+    if (forwarder === undefined) return
+    if (this.disposeFederationRouter !== undefined) return
+    const gateway = this.ctx.get('typertGateway')
+    if (gateway === undefined) return
+    const router: FederationRouter = {
+      hasInstance: instanceId => this.instances.some(instance => instance.id === instanceId),
+      forwarder,
+    }
+    this.disposeFederationRouter = gateway.registerFederationRouter(router)
+  }
+
+  /** Remove the router, restoring the Gateway's local-only path. */
+  private detachFederationRouter(): void {
+    const dispose = this.disposeFederationRouter
+    this.disposeFederationRouter = undefined
+    dispose?.()
+  }
+
+  /** Close every outbound connection and detach the federation router. */
   async dispose(): Promise<void> {
     this.stopPolling()
+    this.federationForwarder = undefined
+    this.detachFederationRouter()
     await this.connections.dispose()
   }
 

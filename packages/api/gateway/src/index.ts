@@ -13,6 +13,13 @@ import type {
 } from '@deepseek-ai/dsh-client-connection'
 import type { RemoteAccessDecision } from '@deepseek-ai/dsh-api-remote-access'
 import { callResources, eventResources } from './access.ts'
+import {
+  isFederatedEndpoint,
+  resolveFederationTarget,
+  type FederationForwarder,
+  type FederationRouter,
+  type FederationTarget,
+} from './federation.ts'
 import { Deque } from '@deepseek-ai/dsh-deque'
 import type { WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -83,6 +90,8 @@ export type {
   TypertRemoteEventSource,
 } from './types.ts'
 export type { RemoteEventHostInfo } from './stream-protocol.ts'
+export { isFederatedEndpoint, resolveFederationTarget } from './federation.ts'
+export type { FederationForwarder, FederationRouter, FederationTarget } from './federation.ts'
 
 interface GatewayErrorOptions {
   readonly cause?: unknown
@@ -94,7 +103,8 @@ interface ResolvedBinding {
   readonly original: object
 }
 
-interface PreparedInvocation {
+interface PreparedLocalInvocation {
+  readonly kind: 'local'
   readonly endpoint: string
   readonly descriptor: InvocationDescriptor
   /** Service view bound to a Context carrying `invocation`, so the method reads it as `this.ctx.invocation`. */
@@ -103,6 +113,19 @@ interface PreparedInvocation {
   readonly method: (...args: never[]) => unknown
   readonly invocation: GatewayInvocation
 }
+
+interface PreparedFederatedInvocation {
+  readonly kind: 'federated'
+  readonly endpoint: string
+  readonly target: FederationTarget
+  /** Bound at preparation time so a disposer cannot strand an in-flight call. */
+  readonly forwarder: FederationForwarder
+  /** Inbound cancellation, joined with the Peer signal for streams. */
+  readonly signal: AbortSignal
+}
+
+/** A call is either dispatched locally or handed to another instance. */
+type PreparedInvocation = PreparedLocalInvocation | PreparedFederatedInvocation
 
 /** Carrier inputs `GatewayInvocation.uplink()` decodes on first use. */
 interface UplinkSource {
@@ -229,6 +252,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
 
   private srcClaims: ReadonlySet<string> | undefined
   private remoteEvents: RegisteredRemoteEventSource | undefined
+  private federationRouter: FederationRouter | undefined
   private readonly remoteEventClients = new Map<RemoteEventClientId, RemoteEventClient>()
   private readonly pendingRemoteEvents = new Map<RemoteEventId, PendingRemoteEvent>()
 
@@ -377,10 +401,36 @@ export class TypertGatewayService extends Service implements TypertGateway {
     }
   }
 
+  /**
+   * Install the sole pluggable federation router.
+   * @param router - instance predicate and outbound forwarder consulted by
+   *   {@link prepareInvocation} before any local descriptor or access lookup.
+   * @returns disposer restoring the local-only path.
+   * @throws if a router is already registered.
+   */
+  registerFederationRouter(router: FederationRouter): () => void {
+    if (this.federationRouter !== undefined) {
+      throw new Error('typert gateway: federation router is already registered')
+    }
+    this.federationRouter = router
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      if (this.federationRouter === router) this.federationRouter = undefined
+    }
+  }
+
   private claimsEndpoint(endpoint: string): boolean {
     if (endpoint === REMOTE_EVENT_RESULT_ENDPOINT) return true
     const segments = endpoint.split('/')
     if (segments.length !== 2 || segments[0] === '' || segments[1] === '') return false
+    // A control-plane Host mounts none of the descriptors it fronts. While a
+    // router is registered, a whitelisted namespace is therefore claimed on
+    // the endpoint alone; the call then reaches `prepareInvocation`, which
+    // still decides from the identifier prefix whether to forward it or fall
+    // through to ordinary local resolution.
+    if (this.federationRouter !== undefined && isFederatedEndpoint(endpoint)) return true
     if (this.ctx.typert.local.get(endpoint) !== undefined || this.ctx.typert.local.hasSeen(endpoint)) return true
     this.srcClaims ??= this.collectSrcClaims()
     return this.srcClaims.has(endpoint)
@@ -426,6 +476,9 @@ export class TypertGatewayService extends Service implements TypertGateway {
   }
 
   private async invokePrepared(prepared: PreparedInvocation): Promise<unknown> {
+    if (prepared.kind === 'federated') {
+      return await prepared.forwarder.unary(prepared.target, prepared.signal)
+    }
     if (prepared.descriptor.mode !== undefined) {
       throw new TypertGatewayError(
         'gateway/signature-invalid',
@@ -459,7 +512,10 @@ export class TypertGatewayService extends Service implements TypertGateway {
    * with the Remote failure as the reason so the carrier delivers that failure.
    */
   private async openStream(request: InvokeRemoteRequest, control: AbortController): Promise<AsyncIterable<unknown>> {
-    const prepared = await this.prepareInvocation(request, control)
+    const prepared = await this.prepareInvocation(request, control, true)
+    if (prepared.kind === 'federated') {
+      return prepared.forwarder.stream(prepared.target, prepared.signal)
+    }
     if (prepared.descriptor.mode === undefined) {
       await prepared.invocation.close()
       throw new TypertGatewayError(
@@ -783,19 +839,58 @@ export class TypertGatewayService extends Service implements TypertGateway {
       // A void or explicitly absent business result carries no `value` field;
       // JSON has no `undefined`, and the envelope's optional slot is the one
       // representation of absence that both args and results already use.
-      return encodeRpcResult(value, prepared.descriptor.result)
+      // A federated call has no local descriptor: its forwarder returns a
+      // business value, so the carrier-side JSON projection is the codec.
+      return encodeRpcResult(value, prepared.kind === 'federated' ? SRC_JSON_CODEC : prepared.descriptor.result)
     } catch (error) {
       return rpcFailure(error)
     }
   }
 
-  /** `control` fails the logical stream when an uplink item is rejected; unary calls hand over an inert one. */
+  /**
+   * Resolve one request to either a local method or a federated target.
+   *
+   * This is the single interception point: unary `invoke()`, `stream()`, the
+   * HTTP `dispatchRpc()` carrier, and the WebSocket `openWireStream()` carrier
+   * all pass through here. Federation is decided before descriptor resolution
+   * and before access evaluation, because a control-plane Host need not mount
+   * the owning instance's descriptors or business Services.
+   *
+   * Reaching this point is carrier-dependent. The HTTP carrier first asks
+   * `claimsEndpoint()`, which claims a two-segment `session`/`workspace`
+   * endpoint whenever a router is registered, so an unmounted descriptor is no
+   * longer a 404 on that path. The WebSocket mux never consulted claims, so the
+   * same unmounted endpoint already arrives. Both paths then rely on the
+   * decision below: an unconfigured or unprefixed identifier falls through to
+   * local descriptor resolution and its ordinary error.
+   *
+   * `control` fails the logical stream when an uplink item is rejected; unary
+   * calls hand over an inert one. `stream` selects the signal shape a
+   * federated stream needs (it also ends with its Peer).
+   */
   private async prepareInvocation(
     request: InvokeRemoteRequest,
     control: AbortController,
+    stream = false,
   ): Promise<PreparedInvocation> {
     const endpoint = endpointOf(request.namespace, request.method)
     assertPeerLive(request.peer, endpoint)
+    const router = this.federationRouter
+    // Only the owner may cross instance boundaries. Every other Principal
+    // keeps the local path so remoteAccess still decides on real resources.
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- other packages merge non-owner kinds into PrincipalMap.
+    if (router !== undefined && request.peer.principal.kind === 'owner') {
+      const target = resolveFederationTarget(endpoint, request.args, id => router.hasInstance(id))
+      if (target !== undefined) {
+        return {
+          kind: 'federated',
+          endpoint,
+          target,
+          forwarder: router.forwarder,
+          signal: methodSignal(request, control, stream),
+        }
+      }
+    }
     const descriptor = this.resolveDescriptor(request.namespace, request.method, endpoint)
     assertExactArguments(request.args, descriptor, endpoint)
     const validated = validateArguments(descriptor, request.args, endpoint)
@@ -866,6 +961,7 @@ export class TypertGatewayService extends Service implements TypertGateway {
       )
     }
     return {
+      kind: 'local',
       endpoint,
       descriptor,
       receiver: callReceiver,

@@ -38,10 +38,21 @@ export interface ResolvedInstance {
   readonly token?: string
 }
 
+/** Federation rollout switch. */
+export interface FederationConfig {
+  /**
+   * Whether prefixed `session/*` and `workspace/*` calls may be forwarded to
+   * their owning instance. Defaults to `true`; `false` keeps every call local.
+   */
+  enabled?: boolean
+}
+
 /** Control-plane plugin configuration. */
 export interface Config {
   /** Instances in sidebar order. */
   instances: InstanceConfig[]
+  /** Federation rollout switch; absent means enabled. */
+  federation?: FederationConfig
 }
 
 /** Id shape accepted from configuration: lowercase words joined by `-` or `_`. */

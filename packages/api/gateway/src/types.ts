@@ -6,6 +6,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { PeerScope, RemoteUplinkWindow, TypertResourceReader } from '@deepseek-ai/dsh-typert-protocol'
 import type { RemoteEventAgentId, RemoteEventHostInfo } from './stream-protocol.ts'
+import type { FederationRouter } from './federation.ts'
 
 /** One Remote method request after a carrier has decoded its envelope. */
 export interface InvokeRemoteRequest {
@@ -174,6 +175,17 @@ export interface TypertGateway {
     source: TypertRemoteEventSource,
     host: RemoteEventHostInfo,
   ): () => Promise<void>
+
+  /**
+   * Install the pluggable federation router consulted before local dispatch.
+   * While registered, an owner call whose endpoint and identifier prefix name
+   * a configured instance is handed to the router's forwarder; every other
+   * call keeps the unchanged local path.
+   * @param router - instance predicate and outbound forwarder.
+   * @returns disposer restoring the local-only path.
+   * @throws if another router is already registered.
+   */
+  registerFederationRouter(router: FederationRouter): () => void
 
   /**
    * Invoke one live Remote method without assuming a carrier or response envelope.
