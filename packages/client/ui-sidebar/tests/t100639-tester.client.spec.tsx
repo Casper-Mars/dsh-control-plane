@@ -466,7 +466,7 @@ describe('7. regressions around the row change', () => {
   it('keeps a folded instance folded across a 6s poll', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [groupOf('poll7', [session('poll7:s-1', 'A')])])
-    render(<InstanceGroups fetchTree={fetchTree} retry={vi.fn(async () => {})} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={vi.fn(async () => {})} t={t} intervalMs={6000} />)
     await settle()
     const header = screen.getByRole('button', { name: /POLL7\(poll7\)/ })
     fireEvent.click(header)

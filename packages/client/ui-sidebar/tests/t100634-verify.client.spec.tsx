@@ -184,7 +184,7 @@ describe('paging and fold regression with titled rows', () => {
     const sessions = Array.from({ length: 20 }, (_, i) => session('t100e', i, `Task ${i}`))
     const fetchTree = vi.fn(async () => [group('t100e', sessions)])
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} intervalMs={6000} />,
     )
     await settle()
     expect(rows(container)).toBe(8)
@@ -216,7 +216,7 @@ describe('paging and fold regression with titled rows', () => {
     const sessions = Array.from({ length: 20 }, (_, i) => session('t100f', i, `Task ${i}`))
     const fetchTree = vi.fn(async () => [group('t100f', sessions)])
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} intervalMs={6000} />,
     )
     await settle()
     expect(rows(container)).toBe(8)

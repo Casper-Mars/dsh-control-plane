@@ -16,7 +16,7 @@ import { createPanelPins } from './panel-pins.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
 import { SidebarRoot } from './SidebarRoot.tsx'
 import {
-  instanceGroupsSlot, mainSessionId, type InstanceGroupView, type SessionListSource,
+  instanceGroupsSlot, mainSessionId, type InstanceGroupView, type InstanceGroupsEvent, type SessionListSource,
 } from './InstanceGroups.tsx'
 import { PanelIcon } from './PanelIcon.tsx'
 import { en, ja, es, fr, de, ru, pt, zh, type SidebarKey } from './locales.ts'
@@ -51,6 +51,11 @@ type RemoteFrame<T> = { ok: true; value: T } | { ok: false; error: unknown }
 interface ControlPlaneRemote {
   tree: () => Promise<RemoteFrame<readonly InstanceGroupView[]>>
   reconnect: (request: { readonly instanceId: string }) => Promise<RemoteFrame<unknown>>
+  /**
+   * Live sidebar frames. Optional: a Host from before this endpoint has no
+   * `events`, and the section then keeps its fallback poll as the only path.
+   */
+  events?: (signal?: AbortSignal) => AsyncIterable<InstanceGroupsEvent>
 }
 
 /**
@@ -82,6 +87,13 @@ function controlPlaneRemote(ctx: ClientContext): ControlPlaneRemote | undefined 
  * poll, and identical references let React skip the render.
  */
 const NO_GROUPS: readonly InstanceGroupView[] = []
+
+/** An event stream that ends immediately, for a namespace that is not there. */
+const NO_EVENTS: AsyncIterable<InstanceGroupsEvent> = {
+  async *[Symbol.asyncIterator]() {
+    // No control plane: the section stays on the fallback poll.
+  },
+}
 
 interface WorkspaceNavigation {
   startSession(workspaceId?: Parameters<SidebarRootInjected['startSession']>[0]): void
@@ -236,6 +248,15 @@ export function apply(ctx: ClientContext): void {
     return result.value
   }
   const createSession = sessionCreate(ctx)
+  // The namespace can mount after this apply, so the stream re-resolves it per
+  // connection instead of capturing one face. Present only when the Client is
+  // composed as a control plane; a plain dsh Client never subscribes.
+  const readEvents = (signal: AbortSignal): AsyncIterable<InstanceGroupsEvent> => {
+    const controlPlane = controlPlaneRemote(ctx)
+    if (controlPlane?.events === undefined) return NO_EVENTS
+    return controlPlane.events(signal)
+  }
+  const controlPlaneComposed = controlPlaneRemote(ctx)?.events !== undefined
   ctx.slots.inject('sidebar.instances', () => ctx.slots.register({
     name: 'sidebar.instances',
     locale: NS,
@@ -256,6 +277,7 @@ export function apply(ctx: ClientContext): void {
     // 由网关的联邦路由拆分，控制面侧不做任何前缀处理。
     openSession: (key) => { workspaceNavigation.openSession(key) },
     currentSession: currentSessionSource(ctx),
+    ...(controlPlaneComposed ? { events: readEvents } : {}),
   })))
   // macOS desktop hides the collapsed sidebar entirely, so the open/New
   // Session controls move into the frame's window-chrome seat beside the

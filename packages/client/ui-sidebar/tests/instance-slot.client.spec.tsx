@@ -132,7 +132,7 @@ describe('sidebar.instances wiring', () => {
       expect(view.getByRole('button', { name: /CTO\(cto\), Connected/ })).toBeTruthy()
 
       refuse = true
-      await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(30000) })
       expect(tree).toHaveBeenCalledTimes(2)
       expect(view.getByRole('button', { name: /CTO\(cto\), Connected/ })).toBeTruthy()
       expect(view.getByText('Fix the login flow')).toBeTruthy()

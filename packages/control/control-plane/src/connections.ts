@@ -108,6 +108,9 @@ export class InstanceConnections {
   /** Last attempt start per instance, used by the {@link recover} throttle. */
   private readonly lastAttemptAt = new Map<string, number>()
 
+  /** Observers told after every attempt settled, so reachability is pushed eagerly. */
+  private readonly stateListeners = new Set<() => void>()
+
   /** Set by {@link dispose}; a connection finishing afterwards is closed at once. */
   private closed = false
 
@@ -197,9 +200,37 @@ export class InstanceConnections {
     return result
   }
 
+  /**
+   * Follow reachability changes this registry makes on its own.
+   *
+   * `connect`, `reconnect`, and `recover` settle in the background, so a caller
+   * that only reads {@link states} on its own schedule would show a stale
+   * reachability until the next read. Every settled attempt wakes the
+   * listeners, which is what lets the control plane publish a `states` frame
+   * the moment an instance comes back (or drops) without waiting for a poll.
+   * @param listener - called after an attempt settled and its outcome is visible in {@link states}.
+   * @returns disposer that removes the listener.
+   */
+  onStateChange(listener: () => void): () => void {
+    this.stateListeners.add(listener)
+    return () => { this.stateListeners.delete(listener) }
+  }
+
+  /** Wake every reachability observer; a throwing listener must not stop the others. */
+  private notifyStateChange(): void {
+    for (const listener of [...this.stateListeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[control-plane] 可达性监听器抛错:', error)
+      }
+    }
+  }
+
   /** Close every connection; an attempt still in flight closes its own result. */
   async dispose(): Promise<void> {
     this.closed = true
+    this.stateListeners.clear()
     const mounted = [...this.upstreams.values()]
     this.upstreams.clear()
     this.failures.clear()
@@ -220,6 +251,10 @@ export class InstanceConnections {
     this.attempts.set(instance.id, task)
     const settle = (): void => {
       if (this.attempts.get(instance.id) === task) this.attempts.delete(instance.id)
+      // Only now does `states()` report the final outcome: the attempt is gone
+      // from the in-flight map, so observers see `connected`/`unreachable`
+      // rather than the transient `connecting`.
+      this.notifyStateChange()
     }
     // `run` never rejects; the catch keeps a future change from wedging the map.
     void task.then(settle, settle)

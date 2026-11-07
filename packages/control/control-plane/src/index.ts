@@ -17,18 +17,22 @@ import z from '@deepseek-ai/schemastery'
 import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
 import { InstanceConnections, type InstanceConnection } from './connections.ts'
 import { instanceUnreachable } from './errors.ts'
+import { ControlPlaneEventHub, diffInstanceStates } from './events.ts'
 import { buildTree, qualify, split } from './tree.ts'
 import type {
-  InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest, ReconnectValue, RouteRequest, RouteValue,
-  SessionChange, SessionRow,
+  ControlPlaneEvent, InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest,
+  ReconnectValue, RouteRequest, RouteValue, SessionChange, SessionRow,
 } from './types.ts'
 import { Upstream, type UpstreamTransport } from './upstream.ts'
 
 export type { InstanceConfig, ResolvedInstance, Config as ControlPlaneConfig } from './config.ts'
 export type {
-  InstanceInfo, InstanceNode, InstanceStateReport, ReconnectRequest, ReconnectValue, RouteRequest, RouteValue,
-  SessionChange, SessionNode, SessionRow, UpstreamState, WorkspaceNode,
+  ControlPlaneEvent, InstanceInfo, InstanceNode, InstanceStateFrame, InstanceStateReport, ReconnectRequest,
+  ReconnectValue, RouteRequest, RouteValue, SessionChange, SessionNode, SessionRow, UpstreamState,
+  WorkspaceNode,
 } from './types.ts'
+export { ControlPlaneEventHub, DEFAULT_QUEUE_LIMIT, diffInstanceStates } from './events.ts'
+export type { SubscriptionDiagnostic } from './events.ts'
 export { InstanceConnections, DEFAULT_RETRY_INTERVAL_MS } from './connections.ts'
 export type { InstanceConnectionsOptions, OpenUpstream } from './connections.ts'
 export { Upstream } from './upstream.ts'
@@ -93,6 +97,40 @@ export class ControlPlane extends TypertRemoteService {
   /** Last composed view per instance, used to diff refresh passes. */
   private readonly previous = new Map<string, Map<string, { updatedAt: number; running: boolean }>>()
 
+  /** Push fan-out for the `events` stream: status, change, states, and tree frames. */
+  private readonly eventHub = new ControlPlaneEventHub()
+
+  /**
+   * Reachability last announced to subscribers. Every `states` frame diffs
+   * against it, so an instance that did not move is never announced twice and a
+   * background retry can publish the outcome without a snapshot read.
+   */
+  private announced: Record<string, InstanceStateReport>
+
+  /** Registry listeners are attached to, so a swapped registry re-attaches. */
+  private stateListenerSource: InstanceConnections | undefined
+
+  /** Disposer of the reachability listener installed on {@link stateListenerSource}. */
+  private stateListenerDispose: (() => void) | undefined
+
+  /** In-flight state pass, shared by every change that arrived while it ran. */
+  private statePassRunning: Promise<void> | undefined
+
+  /** Set when a change arrived during a running state pass; the pass repeats. */
+  private statePassQueued = false
+
+  /** Depth of the initial-tree composition, whose states land in the tree itself. */
+  private composingInitial = 0
+
+  /** Set by {@link dispose}: a disposed plane never starts a loop or a listener again. */
+  private disposed = false
+
+  /** Live `events` streams; the refresh loop runs while at least one exists. */
+  private eventStreams = 0
+
+  /** Whether the refresh loop exists because of the `events` stream (not a Host call). */
+  private ownsRefreshLoop = false
+
   /** Polling timer; undefined when refresh is driven manually. */
   private timer: ReturnType<typeof setInterval> | undefined
 
@@ -112,6 +150,7 @@ export class ControlPlane extends TypertRemoteService {
         upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
       },
     })
+    this.announced = this.connections.states()
     // Federation transport: this control plane *is* the forwarder, so the
     // router exists from the first tick. Registration itself still waits for a
     // Gateway, and {@link attachFederationRouter} is retried below when the
@@ -172,6 +211,33 @@ export class ControlPlane extends TypertRemoteService {
   }
 
   /**
+   * Follow the sidebar's live frames.
+   *
+   * The first frame is a complete tree, so a subscriber that connected after
+   * the last published change still starts from the truth. After that the
+   * stream carries session running state, add/update/remove changes, and
+   * reachability changes, plus a fresh tree whenever reachability moved (a
+   * recovered instance has to bring its rows back).
+   *
+   * The stream starts the 2s refresh loop while it has subscribers — that loop
+   * is what turns `listSessions` diffs into `change` frames — and stops it when
+   * the last subscriber leaves, unless a Host already runs one.
+   * @param signal - subscription cancellation owned by the Remote carrier.
+   * @returns the initial tree followed by published frames.
+   */
+  @Remote({ name: 'events', mode: 'stream' })
+  events(signal: AbortSignal): AsyncIterable<ControlPlaneEvent> {
+    // Reachability changes that happen outside a snapshot pass (a background
+    // `recover()` settling, an explicit reconnect) must reach the sidebar as
+    // they happen, not on the next 30s poll, so the registry is followed from
+    // the moment a stream exists. A disposed plane keeps no listener: its
+    // stream ends immediately (the hub is closed) and a late subscriber must
+    // not resurrect a background loop.
+    if (!this.disposed) this.attachStateListener()
+    return this.watchEvents(signal)
+  }
+
+  /**
    * Retry one instance without restarting the control plane.
    *
    * A failed retry resolves with `{ state: 'unreachable', error }` instead of
@@ -183,7 +249,9 @@ export class ControlPlane extends TypertRemoteService {
    */
   @Remote('reconnect')
   async reconnect(request: ReconnectRequest): Promise<ReconnectValue> {
-    return await this.connections.reconnect(request.instanceId)
+    const value = await this.connections.reconnect(request.instanceId)
+    await this.publishReachability()
+    return value
   }
 
   /**
@@ -205,7 +273,9 @@ export class ControlPlane extends TypertRemoteService {
    * @returns the instance ids that connected, in configuration order.
    */
   async connect(transportFor?: (instance: ResolvedInstance) => UpstreamTransport): Promise<string[]> {
-    return await this.connections.connect(transportFor)
+    const ids = await this.connections.connect(transportFor)
+    await this.publishReachability()
+    return ids
   }
 
   /**
@@ -227,6 +297,7 @@ export class ControlPlane extends TypertRemoteService {
    */
   startPolling(intervalMs: number = 2000): () => void {
     this.stopPolling()
+    this.ownsRefreshLoop = false
     this.timer = setInterval(() => { void this.snapshot() }, intervalMs)
     return () => { this.stopPolling() }
   }
@@ -254,6 +325,9 @@ export class ControlPlane extends TypertRemoteService {
       bySession = new Map()
       this.running.set(instanceId, bySession)
     }
+    // The same state may arrive twice (an upstream event and a list diff); the
+    // second one is not a change and must not wake every browser.
+    if (bySession.get(sessionId) === running) return
     bySession.set(sessionId, running)
     const key = qualify(instanceId, sessionId)
     for (const listener of [...this.statusListeners]) {
@@ -263,6 +337,7 @@ export class ControlPlane extends TypertRemoteService {
         console.error('[control-plane] 状态监听器抛错:', error)
       }
     }
+    this.eventHub.publishStatus(key, running)
   }
 
   /**
@@ -273,8 +348,34 @@ export class ControlPlane extends TypertRemoteService {
     return this.connections.states()
   }
 
+  async snapshot(): Promise<InstanceNode[]> {
+    const tree = await this.compose()
+    this.publishStateChanges(tree)
+    return tree
+  }
+
   /**
-   * Read every instance and compose the sidebar tree.
+   * Compose the tree that opens a `events` subscription.
+   *
+   * The frame itself carries every instance's reachability, so it *is* the new
+   * baseline: states observed while it composed are not announced again on top
+   * of a view that already shows them.
+   * @returns the instance → workspace → session tree.
+   */
+  private async initialTree(): Promise<readonly InstanceNode[]> {
+    this.composingInitial += 1
+    try {
+      const tree = await this.compose()
+      this.announced = this.connections.states()
+      return tree
+    } finally {
+      this.composingInitial -= 1
+    }
+  }
+
+  /**
+   * Compose the instance → workspace → session tree without publishing state
+   * or change frames. Callers that watch reachability wrap this themselves.
    *
    * An instance that fails here keeps the reachability its upstream reported
    * (`unreachable` + error) and contributes **no row entry at all** — writing
@@ -283,25 +384,121 @@ export class ControlPlane extends TypertRemoteService {
    * background, rate limited by {@link InstanceConnections.recover}.
    * @returns the instance → workspace → session tree.
    */
-  async snapshot(): Promise<InstanceNode[]> {
-    this.connections.recover()
+  private async compose(recover = true): Promise<InstanceNode[]> {
+    if (recover) this.connections.recover()
     const rows = new Map<string, readonly SessionRow[]>()
     await Promise.all(this.instances.map(async (instance) => {
       const upstream = this.connections.get(instance.id)
       if (upstream === undefined) return
       try {
         const listed = await upstream.listSessions()
-        this.diff(instance.id, listed)
-        // 事件可能比列表更新：用事件里已知的状态覆盖列表里的旧值
-        const live = this.running.get(instance.id)
-        rows.set(instance.id, live === undefined
-          ? listed
-          : listed.map(row => live.has(row.sessionId) ? { ...row, running: live.get(row.sessionId) === true } : row))
+        // 事件可能比列表更新：先对齐事件已知状态，再 diff 与展示，否则一份滞后的
+        // 列表会把刚推送的 running 又改回旧值。
+        const effective = this.withLiveStatus(instance.id, listed)
+        this.diff(instance.id, effective)
+        rows.set(instance.id, effective)
       } catch {
         // 保留该实例的 state/error，不写空数组：离线与"在线但无会话"必须可分
       }
     }))
     return buildTree(this.instances, rows, this.states())
+  }
+
+  /**
+   * Overlay the running state learned from events onto a fetched list. A
+   * persistence read may lag the event stream; the event is the fresher fact.
+   * @param instanceId - instance the rows belong to.
+   * @param rows - rows as the instance listed them.
+   * @returns the rows with every event-known session state applied.
+   */
+  private withLiveStatus(instanceId: string, rows: readonly SessionRow[]): readonly SessionRow[] {
+    const live = this.running.get(instanceId)
+    if (live === undefined || live.size === 0) return rows
+    return rows.map(row => live.has(row.sessionId) ? { ...row, running: live.get(row.sessionId) === true } : row)
+  }
+
+  /**
+   * Publish the reachability changes a composed pass observed, preceded by a
+   * fresh tree: a recovered instance has to bring its rows back with it, and a
+   * newly unreachable one must stop showing clickable rows.
+   * @param tree - tree the pass composed, already carrying the new states.
+   */
+  private publishStateChanges(tree: readonly InstanceNode[]): void {
+    if (this.eventHub.subscriberCount === 0) return
+    const after = this.connections.states()
+    const changed = diffInstanceStates(this.announced, after, this.instanceIds())
+    if (changed.length === 0) return
+    this.announced = after
+    this.eventHub.publishStates(changed)
+    this.eventHub.publishTree(tree)
+  }
+
+  /**
+   * Announce whatever an explicit connect/retry changed, recomposing first so
+   * the tree frame carries the rows of every instance whose state moved.
+   * @returns resolves once the pass that observed the attempt finished.
+   */
+  private async publishReachability(): Promise<void> {
+    if (this.eventHub.subscriberCount === 0) return
+    await this.requestStatePass()
+  }
+
+  /**
+   * Ask for one state pass. A change that arrives while a pass runs marks
+   * another round instead of starting a competing compose, so two passes never
+   * interleave their `previous` bookkeeping.
+   * @returns resolves when the drain settled.
+   */
+  private requestStatePass(): Promise<void> {
+    this.statePassQueued = true
+    this.statePassRunning ??= this.drainStatePasses()
+    return this.statePassRunning
+  }
+
+  /** Run queued state passes until no change arrived during the last one. */
+  private async drainStatePasses(): Promise<void> {
+    try {
+      while (this.statePassQueued) {
+        this.statePassQueued = false
+        const tree = await this.compose(false)
+        this.publishStateChanges(tree)
+      }
+    } finally {
+      this.statePassRunning = undefined
+    }
+  }
+
+  /**
+   * Follow the connection registry so a settled background attempt becomes a
+   * frame immediately. Skipped while the opening tree composes: that frame
+   * carries the same states, and {@link initialTree} makes it the baseline.
+   */
+  private notifyInstanceState(): void {
+    if (this.composingInitial > 0) return
+    if (this.eventHub.subscriberCount === 0) return
+    void this.requestStatePass().catch((error: unknown) => {
+      console.error('[control-plane] 可达性刷新失败:', error)
+    })
+  }
+
+  /** Listen to the current registry, replacing a listener left on an older one. */
+  private attachStateListener(): void {
+    if (this.stateListenerSource === this.connections) return
+    this.detachStateListener()
+    this.stateListenerSource = this.connections
+    this.stateListenerDispose = this.connections.onStateChange(() => { this.notifyInstanceState() })
+  }
+
+  /** Remove the registry listener, if one is installed. */
+  private detachStateListener(): void {
+    this.stateListenerDispose?.()
+    this.stateListenerDispose = undefined
+    this.stateListenerSource = undefined
+  }
+
+  /** Configured instance ids, in configuration order. */
+  private instanceIds(): readonly string[] {
+    return this.instances.map(instance => instance.id)
   }
 
   /** Compare one instance's fresh list with the previous pass and emit changes. */
@@ -334,6 +531,7 @@ export class ControlPlane extends TypertRemoteService {
         console.error('[control-plane] 变更监听器抛错:', error)
       }
     }
+    this.eventHub.publishChange(key, kind)
   }
 
   /**
@@ -447,12 +645,63 @@ export class ControlPlane extends TypertRemoteService {
 
   /** Close every outbound connection and detach the federation router. */
   async dispose(): Promise<void> {
+    this.disposed = true
+    // Subscribers first: a stream must not observe a half-closed connection set.
+    this.detachStateListener()
+    this.eventHub.close()
+    this.eventStreams = 0
     this.stopPolling()
     // Order matters: no inbound call may observe a half-closed set of
     // connections, so the router goes first and the sockets after it.
     this.federationForwarder = undefined
     this.detachFederationRouter()
     await this.connections.dispose()
+  }
+
+  /**
+   * Drive one `events` subscription and keep the refresh loop alive for it.
+   * @param signal - subscription cancellation.
+   * @returns the initial tree followed by published frames.
+   */
+  private async *watchEvents(signal: AbortSignal): AsyncIterable<ControlPlaneEvent> {
+    if (this.disposed) return
+    this.retainRefreshLoop()
+    let released = false
+    const release = (): void => {
+      if (released) return
+      released = true
+      this.releaseRefreshLoop()
+    }
+    // The refresh loop belongs to the subscription, not to this generator's
+    // finalizer: an abort can arrive while the opening tree is still composing,
+    // and the 2s poll (whose retries touch every instance) has to stop then,
+    // not whenever the consumer next pulls.
+    signal.addEventListener('abort', release, { once: true })
+    try {
+      yield* this.eventHub.subscribe(async () => await this.initialTree(), signal)
+    } finally {
+      signal.removeEventListener('abort', release)
+      release()
+    }
+  }
+
+  /**
+   * Start the 2s refresh loop if nothing else already runs it. Diffs from that
+   * loop are what turn list changes into `change` frames between client polls.
+   */
+  private retainRefreshLoop(): void {
+    this.eventStreams += 1
+    if (this.timer !== undefined) return
+    this.startPolling()
+    this.ownsRefreshLoop = true
+  }
+
+  /** Stop the refresh loop once the last `events` subscriber left, if we own it. */
+  private releaseRefreshLoop(): void {
+    this.eventStreams = Math.max(0, this.eventStreams - 1)
+    if (this.eventStreams > 0 || !this.ownsRefreshLoop) return
+    this.stopPolling()
+    this.ownsRefreshLoop = false
   }
 
   /**

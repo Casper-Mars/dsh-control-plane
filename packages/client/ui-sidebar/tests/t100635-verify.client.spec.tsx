@@ -287,7 +287,7 @@ describe('t100635 / regression: session ladder and folding', () => {
   it('keeps a folded group folded across a 6000 ms poll', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('ver-fold', 2)])
-    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} intervalMs={6000} />)
     await settle()
     const header = screen.getByRole('button', { name: /VER-FOLD\(ver-fold\)/ })
     expect(header.getAttribute('aria-expanded')).toBe('true')

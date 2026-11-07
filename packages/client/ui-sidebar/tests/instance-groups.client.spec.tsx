@@ -339,7 +339,7 @@ describe('InstanceGroups rows', () => {
   it('folds a group without the poll resetting it', async () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('lab', 2)])
-    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} intervalMs={6000} />)
     await settle()
     const header = screen.getByRole('button', { name: /LAB\(lab\)/ })
     expect(header.getAttribute('aria-expanded')).toBe('true')
@@ -402,7 +402,7 @@ describe('InstanceGroups frames', () => {
       if (fail) throw new Error('boom')
       return [group('core', 1)]
     })
-    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
+    render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} intervalMs={6000} />)
     await settle()
     expect(screen.getByText('session-0')).toBeTruthy()
 
@@ -419,7 +419,7 @@ describe('InstanceGroups frames', () => {
     const fetchTree = vi.fn(async () => [down
       ? group('shift', 0, '/workspace', { state: 'unreachable' as const, error: 'gone' })
       : group('shift', 1)])
-    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} />)
+    const { container } = render(<InstanceGroups fetchTree={fetchTree} retry={retrySpy()} t={t} intervalMs={6000} />)
     await settle()
     expect(container.querySelector('[data-instance-state="connected"]')).not.toBeNull()
 

@@ -14,6 +14,7 @@
 | `src/upstream.ts` | 每实例一条出站连接（独立 Cordis 子 root + client connection + 只挂 `session` 命名空间），`listSessions()` / `createSession()` / 状态与错误 |
 | `src/index.ts` | `controlPlane.connect()`（连全部 + 探活）、`.snapshot()`（并发拉取并组树）、`.states()`、`.dispose()` |
 | `src/connections.ts` | 每实例连接注册表：重连（并发去重）、自动恢复限频（默认 5s/实例）、失败原因（值而非抛错） |
+| `src/events.ts` | `controlPlane/events` 推送扇出：首帧全量树、`status` / `change` / `states` 增量帧、每订阅者有限队列（慢消费者只丢旧的非树帧） |
 | `scripts/demo-tree.ts` | 假数据演示三级结构 |
 | `scripts/demo-two.ts` | 两个真实实例 → 三元树 + 连通状态 |
 
@@ -21,7 +22,7 @@
 
 ### 3.4 前置：Remote 命名空间（已完成）
 
-控制面类改为 `TypertRemoteService`，暴露四个方法（生成物：`lib/typert.host.js`、`lib/typert.remote-client.js`）：
+控制面类改为 `TypertRemoteService`，暴露五个方法（生成物：`lib/typert.host.js`、`lib/typert.remote-client.js`）：
 
 | 方法 | 返回 |
 |---|---|
@@ -29,12 +30,19 @@
 | `controlPlane/tree` | `InstanceNode[]`（实例 → 工作区 → 会话，含 runningCount、state、error） |
 | `controlPlane/route` | `{ key }` → `{ instanceId, sessionId }` |
 | `controlPlane/reconnect` | `{ instanceId }` → `{ state, error? }`（失败是值，不是拒绝） |
+| `controlPlane/events` | `mode: 'stream'`：首帧全量树，随后 `status` / `change` / `states` 增量帧（订阅期间宿主保持 2s diff） |
 
 - 边界类型集中在 `src/types.ts`，通过 `./types` 子路径导出（Typert 的硬性要求）
 - 生成命令：`node --import tsx/esm scripts/generate-typert.ts`（build:artifacts 里也会跑）
-- 生成的描述符：`methods: controlPlane/instances, controlPlane/route, controlPlane/tree, controlPlane/reconnect`
+- 生成的描述符：`methods: controlPlane/instances, controlPlane/route, controlPlane/tree, controlPlane/reconnect, controlPlane/events`
 
-未实现（下一步）：WS 事件流见已知限制。
+### 3.6 事件流（t100642）
+
+- `controlPlane/events` 是本地流式端点（不进 federation 表）：订阅时先 `yield` 一帧 `snapshot()` 全量树，之后逐条推送会话 running 态、added/updated/removed 变化，以及实例可达性变化。
+- 可达性变化同时推 `states`（只含变化的实例）和一帧新 `tree`：恢复的实例要连同会话行一起回来，失败的实例要立刻停掉可点击行。
+- 背压：每订阅者一条有界队列；队列满时丢最旧的非树帧，`tree` 帧始终保留。发布路径不 `await` 消费者，一个卡住的浏览器不会拖慢其他人。
+- 订阅存在期间由事件流持有 2s `startPolling()`（宿主已自行启动时不会抢占；最后一个订阅者离开才停），断线重订阅仍从全量树起步。
+- 侧边栏仍保留 30s 兜底轮询；推送只是快路径。
 
 ### 3.5 离线态与重连（S3-03）
 

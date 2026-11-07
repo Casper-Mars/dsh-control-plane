@@ -963,7 +963,7 @@ describe('8. regressions', () => {
     const fetchTree = vi.fn(async () => [groupOf('poll8', [workspaceOf('poll8', '/repo', rows)])])
     render(
       <InstanceGroups fetchTree={fetchTree} retry={vi.fn(async () => {})}
-        createSession={async () => 'new-1'} refreshTree={async () => []} t={t} />,
+        createSession={async () => 'new-1'} refreshTree={async () => []} t={t} intervalMs={6000} />,
     )
     await settle()
 

@@ -93,6 +93,29 @@ export interface InstanceGroupView {
   readonly workspaces: readonly InstanceWorkspaceView[]
 }
 
+/** One instance a `states` frame reports; mirrors `InstanceStateFrame`. */
+export interface InstanceStateView {
+  /** Configured instance id. */
+  readonly instanceId: string
+  /** Reachability after the change. */
+  readonly state: InstanceState
+  /** Last failure when {@link state} is `unreachable`. */
+  readonly error?: string | undefined
+}
+
+/**
+ * One frame of the control-plane `events` stream; mirrors `ControlPlaneEvent`.
+ *
+ * `tree` replaces the whole view, `status` patches one row's running state in
+ * place, `change` asks for a debounced re-read, and `states` patches instance
+ * reachability without reading sessions.
+ */
+export type InstanceGroupsEvent =
+  | { readonly kind: 'tree'; readonly tree: readonly InstanceGroupView[] }
+  | { readonly kind: 'status'; readonly key: string; readonly running: boolean }
+  | { readonly kind: 'change'; readonly key: string; readonly change: 'added' | 'updated' | 'removed' }
+  | { readonly kind: 'states'; readonly states: readonly InstanceStateView[] }
+
 /** Remote calls this section makes, plus the local navigation its rows drive. */
 export interface InstanceGroupsReaders {
   /** Reads the composed instance → workspace → session tree. */
@@ -139,6 +162,12 @@ export interface InstanceGroupsReaders {
    * immediately instead of waiting for the next tree poll.
    */
   readonly currentSession?: ObservableSnapshot<string | undefined> | undefined
+  /**
+   * Subscribes to the control plane's live frames. Present only under a
+   * composed control plane: without it the section keeps the fallback poll as
+   * its only refresh path.
+   */
+  readonly events?: ((signal: AbortSignal) => AsyncIterable<InstanceGroupsEvent>) | undefined
 }
 
 /** Props of the rendered section. */
@@ -203,6 +232,22 @@ const WATERMARK_BASE = 8
 const WATERMARK_STEP = 8
 
 /**
+ * Fallback poll period. Pushed frames carry the fast path; this slow read is
+ * what recovers whatever a dropped stream lost, so it is never switched off
+ * just because the stream exists.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 30_000
+
+/** Quiet window that coalesces a burst of `change` frames into one tree read. */
+const CHANGE_DEBOUNCE_MS = 300
+
+/** First reconnect delay after the event stream ends or fails. */
+const RECONNECT_BASE_MS = 1000
+
+/** Ceiling for the exponential reconnect delay. */
+const RECONNECT_MAX_MS = 30_000
+
+/**
  * Module-level store: folding survives every 6s poll and a remount of the
  * sidebar content. It holds user choices only — defaults stay derived from the
  * current frame.
@@ -252,6 +297,82 @@ function errorText(error: string | undefined): string | undefined {
   const text = error?.trim()
   if (text === undefined || text.length === 0) return undefined
   return text.length <= ERROR_LIMIT ? text : `${text.slice(0, ERROR_LIMIT - 1)}…`
+}
+
+/**
+ * Reconnect delay for one attempt: exponential from {@link RECONNECT_BASE_MS}
+ * with half-to-full jitter, so a Host restart does not gather every client on
+ * the same tick.
+ * @param attempt - zero-based count of consecutive failures.
+ * @returns the delay in milliseconds, at most {@link RECONNECT_MAX_MS}.
+ */
+function reconnectDelay(attempt: number): number {
+  const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** Math.min(attempt, 5))
+  return Math.round(base * (0.5 + Math.random() * 0.5))
+}
+
+/**
+ * Apply one `status` frame in place: only the addressed row and its two
+ * running counters change, so a running turn never costs a tree read.
+ * @param groups - current view, or undefined before the first frame.
+ * @param key - complete federated Session key (`<instanceId>:<sessionId>`).
+ * @param running - state the frame reports.
+ * @returns the updated view, or the same reference when nothing changed.
+ */
+function withRunning(
+  groups: readonly InstanceGroupView[] | undefined,
+  key: string,
+  running: boolean,
+): readonly InstanceGroupView[] | undefined {
+  if (groups === undefined) return groups
+  const next = groups.map((group) => {
+    const workspaces = group.workspaces.map((workspace) => {
+      const index = workspace.sessions.findIndex(session => session.key === key)
+      if (index < 0) return workspace
+      const session = workspace.sessions[index]
+      if (session === undefined || session.running === running) return workspace
+      const sessions = workspace.sessions.slice()
+      sessions[index] = { ...session, running }
+      return { ...workspace, sessions, runningCount: sessions.filter(row => row.running).length }
+    })
+    if (!workspaces.some((workspace, index) => workspace !== group.workspaces[index])) return group
+    return {
+      ...group,
+      workspaces,
+      runningCount: workspaces.reduce((count, workspace) => count + workspace.runningCount, 0),
+    }
+  })
+  return next.some((group, index) => group !== groups[index]) ? next : groups
+}
+
+/**
+ * Apply one `states` frame: reachability and failure text only. Rows are left
+ * alone because the render gate already hides them under an unreachable group,
+ * and a connecting group keeps the rows it had on its way back.
+ * @param groups - current view, or undefined before the first frame.
+ * @param states - instances whose reachability changed.
+ * @returns the updated view, or the same reference when nothing changed.
+ */
+function withStates(
+  groups: readonly InstanceGroupView[] | undefined,
+  states: readonly InstanceStateView[],
+): readonly InstanceGroupView[] | undefined {
+  if (groups === undefined) return groups
+  const changed = new Map(states.map(state => [state.instanceId, state]))
+  const next = groups.map((group) => {
+    const state = changed.get(group.instanceId)
+    if (state === undefined || (group.state === state.state && group.error === state.error)) return group
+    return {
+      instanceId: group.instanceId,
+      label: group.label,
+      state: state.state,
+      ...(state.error === undefined ? {} : { error: state.error }),
+      runningCount: group.runningCount,
+      sessionCount: group.sessionCount,
+      workspaces: group.workspaces,
+    }
+  })
+  return next.some((group, index) => group !== groups[index]) ? next : groups
 }
 
 /**
@@ -328,7 +449,8 @@ export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
  * @returns the instance section, or nothing while there is neither a frame nor a control plane.
  */
 export function InstanceGroups({
-  fetchTree, retry, createSession, refreshTree, openSession, currentSession, intervalMs = 6000, t,
+  fetchTree, retry, createSession, refreshTree, openSession, currentSession, events,
+  intervalMs = DEFAULT_POLL_INTERVAL_MS, t,
 }: InstanceGroupsProps & { t: TranslateNS<'sidebar'> }) {
   const [groups, setGroups] = useState<readonly InstanceGroupView[]>()
   // Instance ids whose retry is still running: the button shows progress and
@@ -360,7 +482,10 @@ export function InstanceGroups({
   const currentId = useSyncExternalStore(subscribeCurrent, readCurrent, readCurrent)
   // Latest readers: the poll reads through this ref, so a caller that hands in
   // fresh closures every render cannot restart (or multiply) the timer.
-  const readers = useRef({ fetchTree, retry, createSession, refreshTree })
+  const readers = useRef({ fetchTree, retry, createSession, refreshTree, events })
+  // The event subscriber wakes on a debounce timer; the timer outlives a
+  // render, so it reads the newest readers through {@link readers}.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // Monotonic read ticket. Poll frames, retry re-reads, and post-create
   // refreshes all race: only the newest *requested* frame may land, otherwise a
   // slower older read would commit over a newer one and drop rows it already
@@ -391,12 +516,118 @@ export function InstanceGroups({
   // ref to `true` and the lint gate would flag the unmount check as dead.
   const isMounted = (): boolean => mounted.current
   useEffect(() => {
-    readers.current = { fetchTree, retry, createSession, refreshTree }
+    readers.current = { fetchTree, retry, createSession, refreshTree, events }
   })
   useEffect(() => {
     mounted.current = true
-    return () => { mounted.current = false }
+    return () => {
+      mounted.current = false
+      if (refreshTimer.current !== undefined) clearTimeout(refreshTimer.current)
+      refreshTimer.current = undefined
+    }
   }, [])
+
+  /**
+   * Re-read the tree once, coalescing a burst of `change` frames into one read.
+   * The trailing window (not a reset timer) keeps a chatty instance from
+   * starving the read: the first frame opens a 300ms window, the read happens
+   * when it closes.
+   */
+  const scheduleRefresh = (): void => {
+    if (refreshTimer.current !== undefined) return
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = undefined
+      if (!isMounted()) return
+      const ticket = beginFrame()
+      const read = readers.current.refreshTree ?? readers.current.fetchTree
+      void read().then((next) => {
+        if (isMounted()) commitFrame(ticket, next)
+      }, () => {
+        // Keep the previous tree; the fallback poll retries the read.
+      })
+    }, CHANGE_DEBOUNCE_MS)
+  }
+
+  // Live frames. The stream reconnects with exponential backoff when the
+  // carrier ends or throws (Host restart, laptop sleep), and re-applies the
+  // first frame of the new stream, which is always a complete tree. The
+  // fallback poll above keeps running: pushed frames are an optimization, not
+  // the only source of truth.
+  const hasEvents = events !== undefined
+  useEffect(() => {
+    if (!hasEvents) return
+    // A mutable flag behind a function: TypeScript narrows a boolean assigned
+    // only inside the cleanup closure to its initial value.
+    const lifecycle = { closed: false }
+    const isClosed = (): boolean => lifecycle.closed
+    const controller = new AbortController()
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let wakeRetry: (() => void) | undefined
+    let failures = 0
+
+    const apply = (frame: InstanceGroupsEvent): void => {
+      switch (frame.kind) {
+        case 'tree':
+          commitFrame(beginFrame(), frame.tree)
+          return
+        case 'status':
+          setGroups(previous => withRunning(previous, frame.key, frame.running))
+          return
+        case 'states':
+          setGroups(previous => withStates(previous, frame.states))
+          return
+        case 'change':
+          scheduleRefresh()
+          return
+      }
+    }
+
+    const wait = async (delay: number): Promise<void> => {
+      await new Promise<void>((resolve) => {
+        wakeRetry = resolve
+        retryTimer = setTimeout(() => {
+          retryTimer = undefined
+          wakeRetry = undefined
+          resolve()
+        }, delay)
+      })
+    }
+
+    const run = async (): Promise<void> => {
+      while (!isClosed()) {
+        let received = false
+        try {
+          const stream = readers.current.events?.(controller.signal)
+          if (stream === undefined) return
+          for await (const frame of stream) {
+            if (isClosed()) return
+            received = true
+            failures = 0
+            apply(frame)
+          }
+        } catch {
+          // A dropped stream is expected (Host restart, sleep, network loss).
+        }
+        if (isClosed()) return
+        // A stream that produced frames before ending starts over from the
+        // first delay; one that never opened keeps backing off.
+        if (received) failures = 0
+        await wait(reconnectDelay(failures))
+        failures += 1
+      }
+    }
+
+    void run()
+    return () => {
+      lifecycle.closed = true
+      controller.abort()
+      if (retryTimer !== undefined) clearTimeout(retryTimer)
+      retryTimer = undefined
+      const wake = wakeRetry
+      wakeRetry = undefined
+      wake?.()
+    }
+  }, [hasEvents])
 
   useEffect(() => {
     let disposed = false

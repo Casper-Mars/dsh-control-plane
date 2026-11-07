@@ -190,7 +190,7 @@ describe('P2 fold is not reset by polling', () => {
     vi.useFakeTimers()
     const fetchTree = vi.fn(async () => [group('p2', 2)])
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} intervalMs={6000} />,
     )
     await settle()
     expect(rows(container)).toBe(2)
@@ -273,7 +273,7 @@ describe('P4 failed reads keep the last good frame', () => {
       return [group('p4a', 3, '/p4a')]
     })
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} intervalMs={6000} />,
     )
     await settle()
     expect(rows(container)).toBe(3)
@@ -297,7 +297,7 @@ describe('P4 failed reads keep the last good frame', () => {
         : group('p4b', 1)]
     })
     const { container } = render(
-      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} />,
+      <InstanceGroups fetchTree={fetchTree} retry={retry()} t={t} intervalMs={6000} />,
     )
     await settle()
     expect(container.querySelector('[data-instance-state="connected"]')).not.toBeNull()
@@ -429,7 +429,7 @@ describe('P6 rail (wide=false)', () => {
     await settle()
     expect(container.querySelector('[data-dsh-instance-groups]')).not.toBeNull()
     expect(fetchTree).toHaveBeenCalledTimes(1)
-    await tick(6000)
+    await tick(30000)
     expect(fetchTree).toHaveBeenCalledTimes(2)
   })
 })

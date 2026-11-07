@@ -113,6 +113,35 @@ export interface ReconnectValue {
   readonly error?: string | undefined
 }
 
+/**
+ * One instance's reachability inside a `states` event frame.
+ *
+ * It carries the same fields a tree node reports, but only for the instances
+ * that moved, so a reachability change does not force a whole tree read.
+ */
+export interface InstanceStateFrame {
+  /** Configured instance id. */
+  readonly instanceId: string
+  /** Reachability after the change. */
+  readonly state: UpstreamState
+  /** Last failure when {@link state} is `unreachable`. */
+  readonly error?: string | undefined
+}
+
+/**
+ * One frame of the `controlPlane/events` stream.
+ *
+ * `tree` replaces the whole sidebar view (subscription start, reconnection, and
+ * after a reachability change), `status` patches one session's running state,
+ * `change` reports one session add/update/remove, and `states` patches instance
+ * reachability without re-reading sessions.
+ */
+export type ControlPlaneEvent =
+  | { readonly kind: 'tree'; readonly tree: readonly InstanceNode[] }
+  | { readonly kind: 'status'; readonly key: string; readonly running: boolean }
+  | { readonly kind: 'change'; readonly key: string; readonly change: SessionChange }
+  | { readonly kind: 'states'; readonly states: readonly InstanceStateFrame[] }
+
 /** Request of the `route` Remote method. */
 export interface RouteRequest {
   /** `<instanceId>:<sessionId>`. */

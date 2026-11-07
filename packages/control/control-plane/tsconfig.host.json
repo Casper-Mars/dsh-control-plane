@@ -7,9 +7,11 @@
   },
   "files": [
     "src/index.ts",
+    "src/client/index.ts",
     "src/config.ts",
     "src/connections.ts",
     "src/errors.ts",
+    "src/events.ts",
     "src/relay.ts",
     "src/tree.ts",
     "src/upstream.ts",
