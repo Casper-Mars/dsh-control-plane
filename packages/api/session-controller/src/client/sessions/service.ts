@@ -311,14 +311,28 @@ export class ClientSessions implements ISessions {
     signal?.throwIfAborted()
     if (this.closed) throw new Error('Session Controller is disposed')
     const id = this.manager.resolveTarget(target)
-    const cwdHint = isFederatedSessionId(id) && options.cwd !== undefined && options.cwd !== ''
+    const federated = isFederatedSessionId(id)
+    const cwdHint = federated && options.cwd !== undefined && options.cwd !== ''
       ? options.cwd
       : undefined
-    const hintChanged = cwdHint !== undefined && this.federatedCwdHints.get(id) !== cwdHint
-    if (hintChanged) this.federatedCwdHints.set(id, cwdHint)
+    // Every open restates the authoritative path for that pass: a fresh hint
+    // overwrites the previous one, and an open without a hint clears it rather
+    // than letting a stale path survive on the identity row. No release-time
+    // cleanup is needed — the next retain either overwrites or clears. Local
+    // ids own their catalog `cwd` and never touch this map.
+    let hintChanged = false
+    if (cwdHint !== undefined) {
+      if (this.federatedCwdHints.get(id) !== cwdHint) {
+        this.federatedCwdHints.set(id, cwdHint)
+        hintChanged = true
+      }
+    } else if (federated) {
+      hintChanged = this.federatedCwdHints.delete(id)
+    }
     const reference = this.retainScope(id, source)
     // retainScope only republishes when the row did not exist yet; a reopened
-    // federated Session may already have one, so a new hint needs its own pass.
+    // federated Session may already have one, so a changed or cleared hint
+    // needs its own pass.
     if (hintChanged) this.projectList()
     try {
       reference.attachOpening(this.manager.get(id).open(), signal)
@@ -727,7 +741,7 @@ export class ClientSessions implements ISessions {
       const projectionValues = this.manager.projectionValues(id)
       const projectedTitle = projectionValues?.title
       const title = typeof projectedTitle === 'string' && projectedTitle !== '' ? projectedTitle : previous?.title
-      byId[id] = {
+      const row: SessionSummary = {
         ...(previous ?? { id, displayTitle: id, updatedAt: 0 }),
         running: snapshot.running,
         retainedBy: record.retention.retainedBy,
@@ -742,6 +756,10 @@ export class ClientSessions implements ISessions {
         ...(projectionValues === undefined ? {} : { projectionValues }),
         ...(title === undefined ? {} : { title, displayTitle: title }),
       }
+      // A federated identity's `cwd` comes from the hint map alone: spreading
+      // `previous` must not resurrect a path this open cleared.
+      if (federated && cwdHint === undefined) delete row.cwd
+      byId[id] = row
     }
     this.list.set({ ids, byId, phase, projectionsBySession })
   }

@@ -94,6 +94,69 @@ describe('federated Session targets', () => {
     expect(list.byId[FEDERATED]?.blank).toBe(false)
   })
 
+  it('overwrites the federated cwd hint on every open', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    const first = b.svc.retain(FEDERATED, { source: 'mainView', cwd: '/remote/a' })
+    onTestFinished(() => { first.release() })
+    await first.ready
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBe('/remote/a')
+
+    // The identity row already exists, so only the hint pass below can republish
+    // the changed path; the last notification must carry the new value.
+    const seen: Array<string | undefined> = []
+    const unsubscribe = b.svc.list.subscribe(() => {
+      seen.push(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd)
+    })
+    onTestFinished(unsubscribe)
+    const second = b.svc.retain(FEDERATED, { source: 'mainView', cwd: '/remote/b' })
+    onTestFinished(() => { second.release() })
+    await second.ready
+
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.at(-1)).toBe('/remote/b')
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBe('/remote/b')
+    expect(b.svc.list.getSnapshot().ids).toEqual([])
+  })
+
+  it('clears the federated cwd hint when the next open carries none', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    const first = b.svc.retain(FEDERATED, { source: 'mainView', cwd: '/remote/a' })
+    onTestFinished(() => { first.release() })
+    await first.ready
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBe('/remote/a')
+
+    // No authority for a path in this pass: the old one must not survive as a
+    // stale chip, and it must not be inherited from the previous row either.
+    const second = b.svc.retain(FEDERATED, { source: 'mainView' })
+    onTestFinished(() => { second.release() })
+    await second.ready
+
+    const list = b.svc.list.getSnapshot()
+    expect(list.byId[FEDERATED]?.cwd).toBeUndefined()
+    expect('cwd' in (list.byId[FEDERATED] ?? {})).toBe(false)
+    expect(list.ids).toEqual([])
+    expect(b.svc.retainInfo(FEDERATED).getSnapshot().retainedBy).toEqual({ mainView: 2 })
+  })
+
+  it('leaves a local catalog cwd alone whatever hint a caller passes', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    b.svc.handleSessionAdded({
+      agentAvailable: true, sessionId: LOCAL, updatedAt: 1, running: false, blank: false, cwd: '/local/ws',
+    })
+
+    const first = b.svc.retain(LOCAL, { source: 'mainView', cwd: '/ignored/one' })
+    onTestFinished(() => { first.release() })
+    await first.ready
+    expect(b.svc.list.getSnapshot().byId[LOCAL]?.cwd).toBe('/local/ws')
+
+    const second = b.svc.retain(LOCAL, { source: 'mainView' })
+    onTestFinished(() => { second.release() })
+    await second.ready
+    // Neither a hint nor its absence writes or clears anything local: the
+    // catalog row owns `cwd`.
+    expect(b.svc.list.getSnapshot().byId[LOCAL]?.cwd).toBe('/local/ws')
+  })
+
   it('drops the federated identity row with its last reference', async ({ mock, start }) => {
     const b = await bench(mock, start)
     const reference = b.svc.retain(FEDERATED, { source: 'mainView' })
