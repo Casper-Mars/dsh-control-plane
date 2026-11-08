@@ -137,11 +137,16 @@ export interface InstanceGroupsReaders {
    * (`<instanceId>:<localSessionId>`). The section never splits the key: the
    * prefix decides routing, and only the owner knows how to interpret it.
    *
+   * The second argument is the Workspace path the tree grouped the row under.
+   * It is the only `cwd` evidence a federated Session can carry here (the local
+   * catalog never lists one), so navigation forwards it to the Conversation's
+   * Workspace chip.
+   *
    * Optional only so the section stays renderable without a navigation
    * service (isolated fixtures); a composed control-plane Client always wires
    * it, which is the only composition that renders rows at all.
    */
-  readonly openSession?: ((key: string) => void) | undefined
+  readonly openSession?: ((key: string, cwd?: string) => void) | undefined
   /**
    * Creates a Session in one workspace and resolves its owner-local id.
    *
@@ -718,11 +723,13 @@ export function InstanceGroups({
    * went offline between the poll and the click) is reported under the tree; it
    * must never take the sidebar down with it.
    * @param key - complete federated Session key of the activated row.
+   * @param cwd - Workspace path the row was grouped under, forwarded as the
+   * opened Session's hint.
    */
-  const open = (key: string): void => {
+  const open = (key: string, cwd?: string): void => {
     if (openSession === undefined) return
     try {
-      openSession(key)
+      openSession(key, cwd)
       if (openFailure !== undefined) setOpenFailure(undefined)
     } catch (error: unknown) {
       setOpenFailure(errorText(error instanceof Error ? error.message : String(error)))
@@ -742,8 +749,10 @@ export function InstanceGroups({
    * behind a blank line.
    * @param instanceId - owning instance, used to qualify the returned Session id.
    * @param workspaceKey - complete federated Workspace key of the row.
+   * @param workspacePath - path the row was grouped under, forwarded as the
+   * opened Session's `cwd` hint.
    */
-  const createSessionIn = (instanceId: string, workspaceKey: string): void => {
+  const createSessionIn = (instanceId: string, workspaceKey: string, workspacePath: string): void => {
     const { createSession } = readers.current
     if (createSession === undefined || creatingKeys.current.has(workspaceKey)) return
     creatingKeys.current.add(workspaceKey)
@@ -773,7 +782,7 @@ export function InstanceGroups({
         }
         if (!isMounted()) return
         // The control plane answers with the bare id (see the reader contract).
-        open(`${instanceId}:${sessionId}`)
+        open(`${instanceId}:${sessionId}`, workspacePath)
       } catch (error: unknown) {
         if (!isMounted()) return
         const message = errorText(error instanceof Error ? error.message : String(error))
@@ -871,7 +880,7 @@ export function InstanceGroups({
                 now={now}
                 current={currentId}
                 onOpen={open}
-                onCreate={() => { createSessionIn(group.instanceId, workspace.key) }}
+                onCreate={() => { createSessionIn(group.instanceId, workspace.key, workspace.path) }}
                 getTriggerProps={menu?.getTriggerProps}
                 unavailableReason={unavailableReason}
                 t={t}
@@ -953,7 +962,7 @@ function WorkspaceGroup({
   state: DisclosureState
   now: number
   current: string | undefined
-  onOpen: (key: string) => void
+  onOpen: (key: string, cwd?: string) => void
   onCreate: () => void
   getTriggerProps: ContextMenuBindings['getTriggerProps'] | undefined
   unavailableReason: string | undefined
@@ -1049,7 +1058,7 @@ function WorkspaceGroup({
           // row's command, and the native activation must not fire for it.
           event.preventDefault()
           if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-          onOpen(session.key)
+          onOpen(session.key, workspace.path)
         }
         return (
           <button
@@ -1063,7 +1072,7 @@ function WorkspaceGroup({
             aria-label={t('instances.session.open', { name: title })}
             aria-current={selected ? 'true' : undefined}
             title={session.key}
-            onClick={() => { onOpen(session.key) }}
+            onClick={() => { onOpen(session.key, workspace.path) }}
             onKeyDown={onKeyDown}
             // The menu's binding adds the context-menu chord and repeats
             // `onKeyDown`; without bindings the row keeps plain activation.

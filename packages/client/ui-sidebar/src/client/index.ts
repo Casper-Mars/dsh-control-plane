@@ -97,8 +97,12 @@ const NO_EVENTS: AsyncIterable<InstanceGroupsEvent> = {
 
 interface WorkspaceNavigation {
   startSession(workspaceId?: Parameters<SidebarRootInjected['startSession']>[0]): void
-  /** Opens a Session; the control-plane rows pass a complete federated key. */
-  openSession(target: string): void
+  /**
+   * Opens a Session; the control-plane rows pass a complete federated key and
+   * the Workspace path they grouped it under (the only `cwd` evidence a remote
+   * Session has on this Client).
+   */
+  openSession(target: string, hint?: { readonly cwd?: string | undefined }): void
 }
 
 /**
@@ -275,7 +279,7 @@ export function apply(ctx: ClientContext): void {
     },
     // 行点击直接交给 Workspace UI：键是 `<instanceId>:<localSessionId>`，
     // 由网关的联邦路由拆分，控制面侧不做任何前缀处理。
-    openSession: (key) => { workspaceNavigation.openSession(key) },
+    openSession: (key, cwd) => { workspaceNavigation.openSession(key, cwd === undefined ? undefined : { cwd }) },
     currentSession: currentSessionSource(ctx),
     ...(controlPlaneComposed ? { events: readEvents } : {}),
   })))

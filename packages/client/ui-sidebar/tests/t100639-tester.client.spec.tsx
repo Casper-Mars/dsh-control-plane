@@ -144,12 +144,12 @@ describe('1/2. session row activation', () => {
 
     fireEvent.click(row)
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['act1:s-1'])
+    expect(openSession.mock.calls[0]).toEqual(['act1:s-1', '/repo'])
 
     openSession.mockClear()
     fireEvent.click(within(container).getByText('Fix the login flow'))
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['act1:s-1'])
+    expect(openSession.mock.calls[0]).toEqual(['act1:s-1', '/repo'])
   })
 
   it('opens once when the timestamp child is clicked (bubbles to the row)', async () => {
@@ -157,7 +157,7 @@ describe('1/2. session row activation', () => {
     const { container } = await renderSection([groupOf('act2', [session('act2:s-1', 'Title')])], { openSession })
     fireEvent.click(within(container).getByText('now'))
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['act2:s-1'])
+    expect(openSession.mock.calls[0]).toEqual(['act2:s-1', '/repo'])
   })
 
   it('opens on an unmodified Enter, exactly once', async () => {
@@ -168,7 +168,7 @@ describe('1/2. session row activation', () => {
     // the browser cannot also synthesize a click.
     expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(false)
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['act3:s-1'])
+    expect(openSession.mock.calls[0]).toEqual(['act3:s-1', '/repo'])
   })
 
   it('opens on an unmodified Space exactly once and suppresses the native click', async () => {
@@ -224,7 +224,7 @@ describe('1/2. session row activation', () => {
     // The same child's click still bubbles to the row: one open.
     fireEvent.click(title)
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['act6:s-1'])
+    expect(openSession.mock.calls[0]).toEqual(['act6:s-1', '/repo'])
   })
 })
 
@@ -460,7 +460,7 @@ describe('7. regressions around the row change', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show 4 more sessions' }))
     fireEvent.click(rowOf(container, 'pager:s-19'))
     expect(openSession).toHaveBeenCalledTimes(1)
-    expect(openSession.mock.calls[0]).toEqual(['pager:s-19'])
+    expect(openSession.mock.calls[0]).toEqual(['pager:s-19', '/repo'])
   })
 
   it('keeps a folded instance folded across a 6s poll', async () => {

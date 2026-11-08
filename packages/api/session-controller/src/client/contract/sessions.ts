@@ -43,6 +43,16 @@ export interface SessionReference extends Disposable {
 export interface SessionRetainOptions {
   readonly source: SessionReferenceSource
   readonly signal?: AbortSignal | undefined
+  /**
+   * Owner-reported Workspace path for a federated key.
+   *
+   * The local catalog never lists a federated Session, so its `cwd` cannot come
+   * from `session/list` here; the control plane's tree already knows the path it
+   * grouped the row under. Passing it retains that fact on the identity row so
+   * the Conversation can resolve the Workspace chip without inventing a local
+   * Workspace. Ignored for local identities, whose catalog row owns `cwd`.
+   */
+  readonly cwd?: string | undefined
 }
 
 /** Local ownership counts, independent of catalog membership and never persisted. */

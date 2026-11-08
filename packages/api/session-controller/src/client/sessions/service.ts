@@ -261,6 +261,12 @@ export class ClientSessions implements ISessions {
   /** The object-layer instance cluster and frame dispatch entry. */
   private readonly manager: SessionManager
   private readonly scopes = new Map<SessionId, ScopeRecord>()
+  /**
+   * Owner-reported Workspace paths for federated identities, keyed by the exact
+   * instance-qualified key. Their catalog lives on the owning instance, so this
+   * is the only `cwd` evidence a remote row can carry.
+   */
+  private readonly federatedCwdHints = new Map<SessionId, string>()
   /** Stable per-id sources retained for the Client root lifetime, including across generation replacement. */
   private readonly retainObservers = new Map<SessionId, RetentionObserver>()
   private readonly scopeDrops = new Set<Promise<void>>()
@@ -284,6 +290,7 @@ export class ClientSessions implements ISessions {
       disposeManagerProjection()
       const scopes = [...this.scopes]
       this.scopes.clear()
+      this.federatedCwdHints.clear()
       for (const [, record] of scopes) {
         record.live = false
         record.session.unbindScope()
@@ -304,7 +311,15 @@ export class ClientSessions implements ISessions {
     signal?.throwIfAborted()
     if (this.closed) throw new Error('Session Controller is disposed')
     const id = this.manager.resolveTarget(target)
+    const cwdHint = isFederatedSessionId(id) && options.cwd !== undefined && options.cwd !== ''
+      ? options.cwd
+      : undefined
+    const hintChanged = cwdHint !== undefined && this.federatedCwdHints.get(id) !== cwdHint
+    if (hintChanged) this.federatedCwdHints.set(id, cwdHint)
     const reference = this.retainScope(id, source)
+    // retainScope only republishes when the row did not exist yet; a reopened
+    // federated Session may already have one, so a new hint needs its own pass.
+    if (hintChanged) this.projectList()
     try {
       reference.attachOpening(this.manager.get(id).open(), signal)
       return reference
@@ -696,14 +711,17 @@ export class ClientSessions implements ISessions {
       }
     }
     for (const [id, record] of this.scopes) {
-      if (byId[id] !== undefined) continue
       const address = this.manager.subagentAddress(id)
       // A federated scope has no local catalog row — its catalog lives on the
       // owning instance — yet shell consumers resolve the main Session through
       // this projection. The retained-identity row below (the shape subagent
       // fallbacks already use) carries only facts this Client owns.
       const federated = address === undefined && isFederatedSessionId(id)
+      // A projection row can already name a federated child; the retained
+      // identity still has to publish the current hint over it.
+      if (byId[id] !== undefined && !federated) continue
       if (address === undefined && !federated) continue
+      const cwdHint = federated ? this.federatedCwdHints.get(id) : undefined
       const previous = previousById[id]
       const snapshot = record.session.getSnapshot()
       const projectionValues = this.manager.projectionValues(id)
@@ -720,6 +738,7 @@ export class ClientSessions implements ISessions {
         ...(address === undefined
           ? {}
           : { parentId: address.parentSessionId, origin: 'subagent' as const }),
+        ...(cwdHint === undefined ? {} : { cwd: cwdHint }),
         ...(projectionValues === undefined ? {} : { projectionValues }),
         ...(title === undefined ? {} : { title, displayTitle: title }),
       }

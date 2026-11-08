@@ -25,21 +25,24 @@ export function workspaceLabel(cwd: string): string {
 }
 
 /**
- * The workspace chip (folder + label + chevron), always interactive: before
- * the first message the workspace stays switchable — picking another one
- * moves the New Session flow to that workspace's blank session. Without a
- * label the chip renders its placeholder state: closed folder + the
- * "Choose workspace" call to action.
+ * The workspace chip (folder + label + chevron). Before the first message a
+ * local workspace stays switchable — picking another one moves the New Session
+ * flow to that workspace's blank session; a federated Session is bound to its
+ * owner, so its chip renders locked. Without a label the chip renders its
+ * placeholder state: closed folder + the "Choose workspace" call to action.
  * @param props.label - chip label (see {@link workspaceLabel}); omitted → placeholder.
  * @param props.menuOpen - menu expansion echo.
  * @param props.onClick - menu toggle.
+ * @param props.locked - a bound Workspace the user cannot switch (a federated
+ * Session is pinned to its owning instance): a static echo, no menu, no chevron.
  * @returns the chip button element.
  */
-export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, t }: {
+export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, locked = false, t }: {
   buttonRef?: RefObject<HTMLButtonElement>
   label?: string | undefined
   menuOpen?: boolean
-  onClick?: () => void
+  onClick?: (() => void) | undefined
+  locked?: boolean
   t: HeroTranslate
 }) {
   return (
@@ -48,15 +51,16 @@ export function WorkspaceChip({ buttonRef, label, menuOpen = false, onClick, t }
       type="button"
       className={css.workspace}
       aria-label={t('hero.chooseWorkspace')}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      onClick={onClick}
+      aria-haspopup={locked ? undefined : 'menu'}
+      aria-expanded={locked ? undefined : menuOpen}
+      disabled={locked ? true : undefined}
+      onClick={locked ? undefined : onClick}
     >
       {label === undefined
         ? <IconFolderCloseRegular className={css.folder} size={16} />
         : <IconFolderOpenRegular className={css.folder} size={16} />}
       <span className={css.workspaceLabel}>{label ?? t('hero.chooseWorkspace')}</span>
-      <IconChevronDownOutlineRegular className={css.chevron} size={12} />
+      {locked ? null : <IconChevronDownOutlineRegular className={css.chevron} size={12} />}
     </button>
   )
 }

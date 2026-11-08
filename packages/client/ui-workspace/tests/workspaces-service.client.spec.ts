@@ -38,6 +38,7 @@ afterEach(async () => {
 function persistSelection(selection: {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
+  readonly cwdHint?: string
 }): Map<string, string> {
   const backing = new Map([['dsh.sessions.current', JSON.stringify(selection)]])
   vi.stubGlobal('localStorage', {
@@ -1075,6 +1076,36 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('alpha:s-1'), { source: 'mainView' })
     expect(b.sessions.create).not.toHaveBeenCalled()
     expect(JSON.parse(backing.get('dsh.sessions.current')!)).toEqual({ sessionId: sid('alpha:s-1') })
+  })
+
+  it('forwards the tree cwd hint and persists it with the federated key', () => {
+    const backing = persistSelection({})
+    const b = bench()
+
+    b.uiWorkspace.openSession(sid('alpha:s-1'), { cwd: '/remote/ws' })
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('alpha:s-1'), {
+      source: 'mainView',
+      cwd: '/remote/ws',
+    })
+    // The hint survives a reload with the selection, so the restored chip keeps
+    // naming the remote Workspace instead of falling back to the picker.
+    expect(JSON.parse(backing.get('dsh.sessions.current')!))
+      .toEqual({ sessionId: sid('alpha:s-1'), cwdHint: '/remote/ws' })
+  })
+
+  it('restores a saved federated key with its cwd hint', () => {
+    persistSelection({ sessionId: sid('alpha:s-1'), cwdHint: '/remote/ws' })
+    const b = bench({
+      sessions: sessionState(),
+      workspaces: workspaceState([workspace('a')]),
+    })
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('alpha:s-1'), {
+      source: 'mainView',
+      cwd: '/remote/ws',
+    })
+    expect(b.sessions.create).not.toHaveBeenCalled()
   })
 
   it('restores a saved federated key instead of replacing it with a local Session', () => {

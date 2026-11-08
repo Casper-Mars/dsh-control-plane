@@ -140,7 +140,7 @@ describe('workspace create entry', () => {
     expect(createSession).toHaveBeenCalledExactlyOnceWith('alpha:/repo')
     expect(refreshTree).toHaveBeenCalledOnce()
     // The id is qualified with the same instance the workspace key named.
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1', '/repo')
     expect(order).toEqual(['create:alpha:/repo', 'refresh', 'open:alpha:new-1'])
     // The refreshed frame landed, so the new row is already in the tree.
     expect(container.querySelector('[data-session-key="alpha:new-1"]')).not.toBeNull()
@@ -171,7 +171,7 @@ describe('workspace create entry', () => {
     fireEvent.click(createButton(container))
     await settleChain()
     expect(container.querySelector('[data-create-failure]')).toBeNull()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1', '/repo')
   })
 
   it('sends exactly one create while the first attempt is pending', async () => {
@@ -198,7 +198,7 @@ describe('workspace create entry', () => {
     deferred.resolve('new-1')
     await settleChain()
     expect(createSession).toHaveBeenCalledOnce()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1', '/repo')
     expect(createButton(container).disabled).toBe(false)
   })
 
@@ -261,7 +261,7 @@ describe('workspace create entry', () => {
     const first = container.querySelector('[data-session-key="alpha:s-1"]') as HTMLElement
     expect(first.getAttribute('aria-current')).toBe('true')
     fireEvent.click(first)
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-1', '/repo')
 
     const toggle = container.querySelector('[data-workspace-key="alpha:/repo"]') as HTMLElement
     fireEvent.click(toggle)
@@ -354,7 +354,7 @@ describe('sidebar.instances wiring', () => {
       expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'alpha:/repo' })
       // The same reader serves the post-create refresh and did not wait for a poll.
       expect(tree).toHaveBeenCalledTimes(2)
-      expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-new')
+      expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-new', { cwd: '/repo' })
     } finally {
       await sidebar.dispose()
     }

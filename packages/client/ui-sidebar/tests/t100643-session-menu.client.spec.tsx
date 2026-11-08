@@ -148,7 +148,7 @@ describe('t100643 / session row menu target', () => {
     fireEvent.keyDown(row, { key: ' ' })
 
     expect(openSession).toHaveBeenCalledTimes(2)
-    expect(openSession).toHaveBeenCalledWith('alpha:s-3')
+    expect(openSession).toHaveBeenCalledWith('alpha:s-3', '/repo')
     // Plain activation never opens the menu.
     expect(captured).toEqual([])
   })
@@ -169,7 +169,7 @@ describe('t100643 / session row menu target', () => {
 
     fireEvent.click(row)
 
-    expect(openSession).toHaveBeenCalledWith('alpha:s-4')
+    expect(openSession).toHaveBeenCalledWith('alpha:s-4', '/repo')
   })
 
   it('passes the shell bindings through the slot face', async () => {

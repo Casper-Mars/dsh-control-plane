@@ -118,7 +118,7 @@ describe('fix 1: the failure line clears on success, not when a retry starts', (
     await settleChain()
     // Success is what removes it.
     expect(failureOf(container, 'keep1:/repo')).toBeNull()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('keep1:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('keep1:new-1', '/repo')
   })
 
   it('replaces the reason when the retry fails too', async () => {

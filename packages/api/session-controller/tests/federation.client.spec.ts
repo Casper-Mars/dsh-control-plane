@@ -79,6 +79,21 @@ describe('federated Session targets', () => {
     expect(b.svc.list.getSnapshot().byId[FEDERATED]?.retainedBy).toEqual({ mainView: 1 })
   })
 
+  it('carries the owner-reported Workspace path as the federated row cwd hint', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    const reference = b.svc.retain(FEDERATED, { source: 'mainView', cwd: '/remote/test/workspace' })
+    onTestFinished(() => { reference.release() })
+
+    await reference.ready
+
+    const list = b.svc.list.getSnapshot()
+    // The hint rides the identity row only: the local catalog still names no
+    // federated Session, so no local Workspace can adopt it.
+    expect(list.ids).toEqual([])
+    expect(list.byId[FEDERATED]?.cwd).toBe('/remote/test/workspace')
+    expect(list.byId[FEDERATED]?.blank).toBe(false)
+  })
+
   it('drops the federated identity row with its last reference', async ({ mock, start }) => {
     const b = await bench(mock, start)
     const reference = b.svc.retain(FEDERATED, { source: 'mainView' })

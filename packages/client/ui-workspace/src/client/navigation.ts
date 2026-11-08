@@ -29,6 +29,12 @@ import type { WorkspaceViewStoreActions } from './stores.ts'
 interface MainSelection {
   readonly sessionId?: SessionId
   readonly subagentAddress?: SubagentAddress
+  /**
+   * Owner-reported Workspace path for a federated selection, persisted so a
+   * reload restores the same chip instead of asking the user to pick a local
+   * Workspace that can never own the remote Session.
+   */
+  readonly cwdHint?: string
 }
 
 /** Content preparation and Agent preset for the Session a Workspace flow opens. */
@@ -44,8 +50,10 @@ export interface UiWorkspace {
    * @param target - known Session identity, durable direct-parent subagent address,
    * or an instance-qualified federated key (`<instanceId>:<localSessionId>`), which
    * needs no local catalog row and is forwarded opaquely.
+   * @param hint - owner-reported Workspace path for a federated key, when the
+   * caller (the control-plane tree) already knows it. Ignored for local ids.
    */
-  openSession(target: SessionTarget): void
+  openSession(target: SessionTarget, hint?: { readonly cwd?: string | undefined }): void
   /**
    * Connect a Workspace and open its Session unless a later navigation supersedes it.
    * @param workspaceId - target Workspace.
@@ -293,8 +301,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }
   }
 
-  openSession(target: SessionTarget): void {
-    this.replaceMain(target, this.lifetime.signal, 'reveal')
+  openSession(target: SessionTarget, hint?: { readonly cwd?: string | undefined }): void {
+    this.replaceMain(target, this.lifetime.signal, 'reveal', undefined, hint?.cwd)
   }
 
   openWorkspace(
@@ -480,7 +488,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     // the owning instance — so a missing `byId` entry is not evidence that the
     // saved selection disappeared. Restore it as saved and let the Gateway route.
     if (saved.sessionId !== undefined && isFederatedSessionId(saved.sessionId)) {
-      this.replaceMain(saved.sessionId, this.lifetime.signal, 'preserve')
+      this.replaceMain(saved.sessionId, this.lifetime.signal, 'preserve', undefined, saved.cwdHint)
       return
     }
     const summary = saved.sessionId === undefined ? undefined : sessions.byId[saved.sessionId]
@@ -540,9 +548,13 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     signal: AbortSignal,
     panel: 'reveal' | 'preserve',
     beforeOpen?: (sessionId: SessionId) => void,
+    cwdHint?: string,
   ): void {
     signal.throwIfAborted()
-    const reference = this.sessions.retain(target, { source: 'mainView' })
+    const reference = this.sessions.retain(target, {
+      source: 'mainView',
+      ...(cwdHint === undefined ? {} : { cwd: cwdHint }),
+    })
     try {
       signal.throwIfAborted()
       beforeOpen?.(reference.sessionId)
@@ -556,6 +568,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       this.selection.set({
         sessionId: reference.sessionId,
         ...(subagentAddress === undefined ? {} : { subagentAddress }),
+        ...(cwdHint === undefined ? {} : { cwdHint }),
       })
     } catch (error: unknown) {
       reference.release()

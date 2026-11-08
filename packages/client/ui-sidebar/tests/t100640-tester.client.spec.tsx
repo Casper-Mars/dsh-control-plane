@@ -177,7 +177,7 @@ describe('1. complete create chain', () => {
 
     expect(createSession).toHaveBeenCalledExactlyOnceWith('chain1:/repo')
     expect(refreshTree).toHaveBeenCalledOnce()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('chain1:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('chain1:new-1', '/repo')
     expect(order).toEqual(['create:chain1:/repo', 'refresh', 'open:chain1:new-1'])
     // The refreshed frame is committed, so the row is visible immediately.
     expect(container.querySelector('[data-session-key="chain1:new-1"]')).not.toBeNull()
@@ -214,7 +214,7 @@ describe('1. complete create chain', () => {
     await settleChain()
 
     expect(refreshTree).toHaveBeenCalledOnce()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('chain3:new-3')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('chain3:new-3', '/repo')
     // A failed refresh is not a failed create: no inline failure line.
     expect(container.querySelector('[data-create-failure]')).toBeNull()
     expect(createButtonOf(container, 'chain3:/repo').disabled).toBe(false)
@@ -286,7 +286,7 @@ describe('1b. apply() wiring', () => {
       await settleChain()
 
       expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'wire1:/repo' })
-      expect(openSession).toHaveBeenCalledExactlyOnceWith('wire1:s-new')
+      expect(openSession).toHaveBeenCalledExactlyOnceWith('wire1:s-new', { cwd: '/repo' })
       // The create, then the post-create read, then navigation.
       expect(order.slice(-3)).toEqual(['create:wire1:/repo', 'tree', 'open:wire1:s-new'])
       expect(tree).toHaveBeenCalledTimes(2)
@@ -484,7 +484,7 @@ describe('4. concurrency', () => {
 
     deferred.resolve('new-1')
     await settleChain()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('conc1:new-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('conc1:new-1', '/repo')
     const settled = createButtonOf(container, 'conc1:/repo')
     expect(settled.disabled).toBe(false)
     expect(settled.getAttribute('aria-busy')).toBeNull()
@@ -522,7 +522,7 @@ describe('4. concurrency', () => {
 
     other.resolve('new-other')
     await settleChain()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('conc2:new-other')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('conc2:new-other', '/other')
     // The other workspace is still pending and still disabled.
     expect(createButtonOf(container, 'conc2:/other').disabled).toBe(false)
     expect(createButtonOf(container, 'conc2:/repo').disabled).toBe(true)
@@ -531,7 +531,7 @@ describe('4. concurrency', () => {
     repo.resolve('new-repo')
     await settleChain()
     expect(openSession).toHaveBeenCalledTimes(2)
-    expect(openSession.mock.calls[1]).toEqual(['conc2:new-repo'])
+    expect(openSession.mock.calls[1]).toEqual(['conc2:new-repo', '/repo'])
     expect(createButtonOf(container, 'conc2:/repo').disabled).toBe(false)
   })
 })
@@ -595,7 +595,7 @@ describe('5. failure UX', () => {
     fireEvent.click(createButtonOf(container, 'fail2:/repo'))
     await settleChain()
     expect(container.querySelector('[data-create-failure]')).toBeNull()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('fail2:new-2')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('fail2:new-2', '/repo')
   })
 
   it('keeps the previous reason visible while the retry is pending and clears it only on success', async () => {
@@ -635,7 +635,7 @@ describe('5. failure UX', () => {
     await settleChain()
     // Success is the only thing that removes it.
     expect(container.querySelector('[data-create-failure]')).toBeNull()
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('fail3:new-3')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('fail3:new-3', '/repo')
   })
 
   it('keeps each workspace failure separate from a sibling success', async () => {
@@ -921,7 +921,7 @@ describe('7. control-plane mode and the state gate', () => {
     fireEvent.click(createButtonOf(view.container, 'gate3:/repo'))
     await settleChain()
     expect(createSession).toHaveBeenCalledExactlyOnceWith('gate3:/repo')
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('gate3:new-reader')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('gate3:new-reader', '/repo')
   })
 })
 
@@ -954,7 +954,7 @@ describe('8. regressions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show 12 more sessions' }))
     fireEvent.click(screen.getByRole('button', { name: 'Show 4 more sessions' }))
     fireEvent.click(container.querySelector('[data-session-key="page8:s-19"]') as HTMLElement)
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('page8:s-19')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('page8:s-19', '/repo')
   })
 
   it('keeps folds and the watermark stable across the 6s poll', async () => {
@@ -1003,7 +1003,7 @@ describe('8. regressions', () => {
 
     expect(container.querySelector('[data-session-key="row8:s-1"]')?.getAttribute('aria-current')).toBe('true')
     fireEvent.click(container.querySelector('[data-session-key="row8:s-2"]') as HTMLElement)
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('row8:s-2')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('row8:s-2', '/repo')
     expect(createSession).not.toHaveBeenCalled()
 
     await act(async () => { store.set('row8:s-2') })

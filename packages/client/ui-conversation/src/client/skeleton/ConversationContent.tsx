@@ -7,6 +7,20 @@ import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
 import { ControlPlaneEmpty } from './ControlPlaneEmpty.tsx'
 import css from './ConversationRoot.module.css'
 
+/**
+ * Whether one Session identity is instance-qualified (`<instanceId>:<local>`).
+ *
+ * Restated locally because the client bundle purity gate forbids a value import
+ * from the Session Controller's module table row; the shape rule is identical
+ * to `packages/api/session-controller/src/client/federation.ts`.
+ * @param id - Session identity from navigation or the Session list.
+ * @returns whether the identity names a Session on another instance.
+ */
+function isFederatedSessionId(id: string): boolean {
+  const separator = id.indexOf(':')
+  return separator > 0 && separator < id.length - 1
+}
+
 function ConversationSessionView({ renderSlot }: ConversationViewsProps) {
   return renderSlot('conversation.session', {})
 }
@@ -53,6 +67,11 @@ function ConversationSurface(props: ConversationContentProps) {
   const inputState = useInput(s => s)
   const cwd = useSessions(s => sessionId === undefined ? undefined : s.byId[sessionId]?.cwd)
   const workspaces = useWorkspaces(s => s)
+  // A federated Session is owned by another instance: this Client's Workspace
+  // catalog never lists it, and its `cwd` reaches the identity row only as the
+  // control-plane tree's hint, which is authoritative regardless of the local
+  // list's phase.
+  const federated = sessionId !== undefined && isFederatedSessionId(sessionId)
   // A plugin this package cannot import (ui-model-selection) says this session cannot
   // send; its reason is already localized by whoever raised it.
   const composerBlock = useComposerBlock(block => block)
@@ -115,27 +134,37 @@ function ConversationSurface(props: ConversationContentProps) {
   //      placeholder, never the deleted folder's name via cwd.
   // A title still automatic reads in the reader's language, matching the
   // sidebar row the same Workspace has there.
+  // A local cwd bridges only while the list loads: once it is ready, a cwd with
+  // no owning Workspace means that Workspace was deleted, and the picker must
+  // say so instead of impersonating it with the dead folder's name. A
+  // federated cwd is the opposite case — there is no local membership to wait
+  // for — so its hint always names the owner's Workspace.
+  const cwdTitle = cwd === undefined || cwd === ''
+    ? undefined
+    : federated || workspaces.phase !== 'ready' ? workspaceLabel(cwd) : undefined
   const storedChipTitle = pendingWorkspace?.title
     ?? (sessionId === undefined
       ? undefined
-      : sessionWorkspace?.title
-        ?? (workspaces.phase === 'ready' || cwd === undefined || cwd === ''
-          ? undefined
-          : workspaceLabel(cwd)))
+      : sessionWorkspace?.title ?? cwdTitle)
   const chipTitle = storedChipTitle === undefined
     ? undefined
     : workspaceDisplayTitle(storedChipTitle, t('workspace.defaultName'))
 
-  const heroWorkspaceRow = (
+  // A federated row with no cwd hint cannot name its owner's Workspace, and
+  // offering this Client's Workspaces would attach the remote Session to a
+  // local one. Drop the chip row and keep the composer's actionable notice.
+  const remoteWorkspaceMissing = federated && sessionWorkspace === undefined && cwdTitle === undefined
+  const heroWorkspaceRow = remoteWorkspaceMissing ? null : (
     <div className={css.heroWorkspaceRow}>
       <WorkspaceChip
         buttonRef={pickerAnchor}
         label={chipTitle}
         menuOpen={pickerOpen}
-        onClick={() => { setPickerOpen(open => !open) }}
+        locked={federated}
+        onClick={federated ? undefined : () => { setPickerOpen(open => !open) }}
         t={t}
       />
-      {renderSlot('conversation.hero.workspace', {
+      {federated ? null : renderSlot('conversation.hero.workspace', {
         open: pickerOpen,
         anchorRef: pickerAnchor,
         selectedId: pendingWorkspaceId ?? sessionWorkspace?.workspaceId,
@@ -168,9 +197,15 @@ function ConversationSurface(props: ConversationContentProps) {
     ...(inert
       ? {
         disabled: true,
-        placeholder: t('placeholder.workspace'),
-        workspacePickerOpen: pickerOpen,
-        onRequestWorkspace: () => { setPickerOpen(true) },
+        // A federated row has no local picker to open; its notice names the
+        // recovery action (choose the Session from the instance in the sidebar).
+        placeholder: federated ? t('empty.controlPlane.description') : t('placeholder.workspace'),
+        ...(federated
+          ? {}
+          : {
+            workspacePickerOpen: pickerOpen,
+            onRequestWorkspace: () => { setPickerOpen(true) },
+          }),
       }
       : blocked
         // `blocked`, not `disabled`: the bar refuses input either way, but a

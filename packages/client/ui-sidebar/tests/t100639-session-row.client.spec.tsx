@@ -105,7 +105,7 @@ describe('session row activation', () => {
     expect(row.getAttribute('type')).toBe('button')
     expect(row.tabIndex).toBe(0)
     fireEvent.click(row)
-    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-1')
+    expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-1', '/repo')
     // The prefix is routing information, never stripped here.
     expect(openSession.mock.calls[0]?.[0]).toBe('alpha:s-1')
   })
@@ -124,7 +124,7 @@ describe('session row activation', () => {
     const row = container.querySelector('[data-session-key="alpha:s-2"]') as HTMLElement
     fireEvent.keyDown(row, { key: 'Enter' })
     fireEvent.keyDown(row, { key: ' ' })
-    expect(openSession.mock.calls).toEqual([['alpha:s-2'], ['alpha:s-2']])
+    expect(openSession.mock.calls).toEqual([['alpha:s-2', '/repo'], ['alpha:s-2', '/repo']])
   })
 
   it('ignores modified chords', async () => {
@@ -343,7 +343,7 @@ describe('sidebar.instances wiring', () => {
       expect(second.getAttribute('aria-current')).toBeNull()
 
       await act(async () => { fireEvent.click(second) })
-      expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-2')
+      expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-2', { cwd: '/repo' })
       await settle()
       expect(first.getAttribute('aria-current')).toBeNull()
       expect(second.getAttribute('aria-current')).toBe('true')

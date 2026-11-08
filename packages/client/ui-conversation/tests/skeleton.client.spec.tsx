@@ -149,6 +149,10 @@ function mount(
     headerOnly?: boolean
     /** Compose the resident content the way a control-plane Client does. */
     controlPlane?: boolean
+    /** Selected row's cwd; `null` removes it (a federated row without a hint). */
+    selectedCwd?: string | null
+    /** Whether the selected row belongs to the local catalog `ids` (never true for a federated key). */
+    listedSelectedRow?: boolean
   } = {},
 ) {
   const sessionId = 'sessionId' in options ? options.sessionId : SID
@@ -159,20 +163,26 @@ function mount(
     id: parent, displayTitle: 'Parent', parentId: root, origin: 'subagent' as const,
     running: false, retainedBy: {}, blank: false, updatedAt: 2,
   }
+  const selectedRowId = sessionId ?? SID
+  const selectedCwd = options.selectedCwd === null
+    ? undefined
+    : options.selectedCwd ?? '/projects/one'
   const childRow = {
-    id: SID, displayTitle: 'Child', parentId: options.nestedSubagent === true ? parent : root,
-    cwd: '/projects/one', running: false, retainedBy: { mainView: 1 }, blank: options.summaryBlank ?? false, updatedAt: 3,
+    id: selectedRowId, displayTitle: 'Child', parentId: options.nestedSubagent === true ? parent : root,
+    ...(selectedCwd === undefined ? {} : { cwd: selectedCwd }),
+    running: false, retainedBy: { mainView: 1 }, blank: options.summaryBlank ?? false, updatedAt: 3,
     ...(options.summaryOrigin === undefined ? {} : { origin: options.summaryOrigin }),
   }
   const listed = options.omitSummaryRow !== true
+  const selectedListed = options.listedSelectedRow ?? true
   const sessions = createSnapshotStore<SessionListState>({
     ids: listed
-      ? [root, ...options.nestedSubagent === true ? [parent] : [], SID]
+      ? [root, ...options.nestedSubagent === true ? [parent] : [], ...selectedListed ? [selectedRowId] : []]
       : [root],
     byId: {
       [root]: rootRow,
       ...listed && options.nestedSubagent === true && { [parent]: parentRow },
-      ...listed && { [SID]: childRow },
+      ...listed && { [selectedRowId]: childRow },
     },
     phase: 'ready', projectionsBySession: {},
   })
@@ -1076,6 +1086,69 @@ describe('ConversationRoot resident composer', () => {
   it('hero phase renders no width handles (no transcript to size)', () => {
     const b = mount(sessionSnapshotOf({ blank: true }))
     expect(b.view.container.querySelector('[data-width-handle]')).toBeNull()
+  })
+})
+
+// A control plane never lists a federated Session in this Client's catalog, so
+// its Workspace chip rides the cwd hint the sidebar carries from the instance
+// tree — never a local Workspace the remote Session cannot join.
+describe('federated Session workspace chrome', () => {
+  const FED = 'inst-1:s-main' as SessionId
+
+  it('resolves the Workspace chip and composer from the cwd hint, without a local picker', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      sessionId: FED,
+      selectedCwd: '/remote/test/workspace',
+      listedSelectedRow: false,
+      controlPlane: true,
+    })
+    // The chip names the owner's Workspace, and it is a bound echo: no local
+    // Workspace can adopt the remote Session.
+    expect(b.view.getByText('workspace')).toBeTruthy()
+    const chip = b.view.getByRole('button', { name: '选择工作区' })
+    expect((chip as HTMLButtonElement).disabled).toBe(true)
+    expect(chip.getAttribute('aria-haspopup')).toBeNull()
+    expect(b.slotCalls).not.toContain('conversation.hero.workspace')
+    // The composer is live: the first prompt goes to the federated Session.
+    expect(b.view.container.querySelector('[contenteditable="true"]')).not.toBeNull()
+    const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('aria-disabled')).not.toBe('true')
+    expect(box.getAttribute('data-placeholder')).not.toBe(zh['placeholder.workspace'])
+    // The first prompt leaves through the same machine sink; nothing here
+    // creates or retargets a local Workspace.
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(b.sink).toHaveBeenCalledWith('ordinary draft', [], 'queue', expect.any(AbortSignal), expect.any(Function))
+    expect(b.retargetWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('degrades safely when a federated row carries no cwd hint', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      sessionId: FED,
+      selectedCwd: null,
+      listedSelectedRow: false,
+      controlPlane: true,
+    })
+    // No chip row and no picker trigger: a local Workspace offer would attach
+    // the remote Session to the wrong owner.
+    expect(b.slotCalls).not.toContain('conversation.hero.workspace')
+    expect(b.view.queryByRole('button', { name: '选择工作区' })).toBeNull()
+    const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('contenteditable')).not.toBe('true')
+    expect(box.getAttribute('aria-haspopup')).toBeNull()
+    expect(box.getAttribute('data-placeholder')).toBe(zh['empty.controlPlane.description'])
+  })
+
+  it('still asks for a Workspace when a local blank lost its Workspace', () => {
+    // The local cwd is stale once the ready list no longer owns it; using it
+    // would impersonate a deleted Workspace and reopen the regression.
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      summaryBlank: true,
+      selectedCwd: '/projects/deleted',
+    })
+    expect(b.view.queryByText('deleted')).toBeNull()
+    expect(b.view.getByRole('button', { name: '选择工作区' })).toBeTruthy()
+    expect(b.slotCalls).toContain('conversation.hero.workspace')
+    expect(b.view.getByRole('textbox').getAttribute('aria-haspopup')).toBe('menu')
   })
 })
 
