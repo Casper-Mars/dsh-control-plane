@@ -150,33 +150,37 @@ function ConversationSurface(props: ConversationContentProps) {
     ? undefined
     : workspaceDisplayTitle(storedChipTitle, t('workspace.defaultName'))
 
-  // A federated row with no cwd hint cannot name its owner's Workspace, and
-  // offering this Client's Workspaces would attach the remote Session to a
-  // local one. Drop the chip row and keep the composer's actionable notice.
-  const remoteWorkspaceMissing = federated && sessionWorkspace === undefined && cwdTitle === undefined
-  const heroWorkspaceRow = remoteWorkspaceMissing ? null : (
+  // A federated Session is bound to its owning instance: this Client can never
+  // switch its Workspace, and even a disabled chip would still be announced as
+  // "Choose workspace". Render no chip and mount no workspace slot at all; the
+  // row keeps its other seats (agent preset, plugin options). `chipTitle` above
+  // still decides the composer's inert posture and the empty-state copy.
+  const heroWorkspaceRow = (
     <div className={css.heroWorkspaceRow}>
-      <WorkspaceChip
-        buttonRef={pickerAnchor}
-        label={chipTitle}
-        menuOpen={pickerOpen}
-        locked={federated}
-        onClick={federated ? undefined : () => { setPickerOpen(open => !open) }}
-        t={t}
-      />
-      {federated ? null : renderSlot('conversation.hero.workspace', {
-        open: pickerOpen,
-        anchorRef: pickerAnchor,
-        selectedId: pendingWorkspaceId ?? sessionWorkspace?.workspaceId,
-        onPick: (workspaceId) => {
-          setPickerOpen(false)
-          setPendingWorkspaceId(workspaceId)
-          void selectWorkspace(workspaceId).catch(() => {
-            setPendingWorkspaceId(current => current === workspaceId ? undefined : current)
-          })
-        },
-        onClose: () => { setPickerOpen(false) },
-      })}
+      {federated ? null : (
+        <>
+          <WorkspaceChip
+            buttonRef={pickerAnchor}
+            label={chipTitle}
+            menuOpen={pickerOpen}
+            onClick={() => { setPickerOpen(open => !open) }}
+            t={t}
+          />
+          {renderSlot('conversation.hero.workspace', {
+            open: pickerOpen,
+            anchorRef: pickerAnchor,
+            selectedId: pendingWorkspaceId ?? sessionWorkspace?.workspaceId,
+            onPick: (workspaceId) => {
+              setPickerOpen(false)
+              setPendingWorkspaceId(workspaceId)
+              void selectWorkspace(workspaceId).catch(() => {
+                setPendingWorkspaceId(current => current === workspaceId ? undefined : current)
+              })
+            },
+            onClose: () => { setPickerOpen(false) },
+          })}
+        </>
+      )}
       {renderSlot('conversation.hero.agentPreset', {})}
       {sessionId === undefined ? null : <div className={css.heroOptions}>{renderSlot('conversation.hero.options', {})}</div>}
     </div>

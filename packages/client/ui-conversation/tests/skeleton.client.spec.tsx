@@ -1090,24 +1090,23 @@ describe('ConversationRoot resident composer', () => {
 })
 
 // A control plane never lists a federated Session in this Client's catalog, so
-// its Workspace chip rides the cwd hint the sidebar carries from the instance
-// tree — never a local Workspace the remote Session cannot join.
+// this Client offers no Workspace chrome for it at all: the cwd hint only
+// decides whether the composer is usable, never a local Workspace the remote
+// Session could join.
 describe('federated Session workspace chrome', () => {
   const FED = 'inst-1:s-main' as SessionId
 
-  it('resolves the Workspace chip and composer from the cwd hint, without a local picker', () => {
+  it('resolves the Workspace from the cwd hint and renders no workspace chip or picker', () => {
     const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
       sessionId: FED,
       selectedCwd: '/remote/test/workspace',
       listedSelectedRow: false,
       controlPlane: true,
     })
-    // The chip names the owner's Workspace, and it is a bound echo: no local
-    // Workspace can adopt the remote Session.
-    expect(b.view.getByText('workspace')).toBeTruthy()
-    const chip = b.view.getByRole('button', { name: '选择工作区' })
-    expect((chip as HTMLButtonElement).disabled).toBe(true)
-    expect(chip.getAttribute('aria-haspopup')).toBeNull()
+    // No chip at all: even a disabled echo would still announce "Choose
+    // workspace", and no local Workspace can adopt the remote Session.
+    expect(b.view.queryByText('workspace')).toBeNull()
+    expect(b.view.queryByRole('button', { name: /选择工作区|workspace/ })).toBeNull()
     expect(b.slotCalls).not.toContain('conversation.hero.workspace')
     // The composer is live: the first prompt goes to the federated Session.
     expect(b.view.container.querySelector('[contenteditable="true"]')).not.toBeNull()
@@ -1128,11 +1127,12 @@ describe('federated Session workspace chrome', () => {
       listedSelectedRow: false,
       controlPlane: true,
     })
-    // No chip row and no picker trigger: a local Workspace offer would attach
-    // the remote Session to the wrong owner.
+    // No chip and no picker trigger: a local Workspace offer would attach the
+    // remote Session to the wrong owner.
     expect(b.slotCalls).not.toContain('conversation.hero.workspace')
-    expect(b.view.queryByRole('button', { name: '选择工作区' })).toBeNull()
+    expect(b.view.queryByRole('button', { name: /选择工作区|workspace/ })).toBeNull()
     const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('aria-disabled')).toBe('true')
     expect(box.getAttribute('contenteditable')).not.toBe('true')
     expect(box.getAttribute('aria-haspopup')).toBeNull()
     expect(box.getAttribute('data-placeholder')).toBe(zh['empty.controlPlane.description'])
