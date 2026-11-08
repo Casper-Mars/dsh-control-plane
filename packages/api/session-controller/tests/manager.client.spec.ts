@@ -1238,6 +1238,34 @@ describe('remaining branches', () => {
     expect(manager.getListSnapshot().items[0]).not.toHaveProperty('cwd')
   })
 
+  it('qualifies a federated fork child with the source instance and catalogs nothing locally', async ({ mock, remote }) => {
+    const manager = makeManager(mock, remote)
+    onTestFinished(() => manager.dispose())
+    remote.session.fork.mockResolvedValueOnce(ok({ sessionId: 'child-1' as SessionId }))
+
+    // The owner answers with its local child id; every later call has to carry
+    // the instance prefix or the Gateway would resolve it against this Host.
+    await expect(manager.fork({ sessionId: 'alpha:parent-1' as SessionId }))
+      .resolves.toEqual(ok({ sessionId: 'alpha:child-1' as SessionId }))
+    expect(remote.session.fork).toHaveBeenCalledExactlyOnceWith({ sessionId: 'alpha:parent-1' })
+    // The child belongs to the source's instance catalog: no local placeholder
+    // may be invented for it (same rule as a federated create).
+    expect(manager.getListSnapshot().items).toEqual([])
+  })
+
+  it('qualifies the child a partially failed federated fork still published and catalogs nothing locally', async ({ mock, remote }) => {
+    const manager = makeManager(mock, remote)
+    onTestFinished(() => manager.dispose())
+    remote.session.fork.mockResolvedValueOnce(err(new RemoteError('session/workspace-attach-failed', 'forked but unattached', {
+      sessionId: 'child-2' as SessionId, workspaceId: 'w1',
+    })))
+
+    const result = await manager.fork({ sessionId: 'alpha:parent-1' as SessionId })
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'session/workspace-attach-failed' } })
+    expect(manager.getListSnapshot().items).toEqual([])
+  })
+
   it.for([undefined, false, true])('forwards fork migration permission %s to the Remote request', async (allowMigration, { mock, remote }) => {
     const manager = makeManager(mock, remote)
     onTestFinished(() => manager.dispose())

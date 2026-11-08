@@ -8,7 +8,20 @@ import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { registerSessionMenus } from '../src/client/session-actions/context-menus.tsx'
 import { en, zh } from '../src/client/locales.ts'
 
-function bench() {
+interface MenuTarget {
+  kind: 'session'
+  value: {
+    sessionId: ReturnType<typeof SessionId>
+    displayTitle: string
+    pinned?: boolean
+    archived?: boolean
+    unavailableReason?: string
+  }
+}
+
+function bench(
+  target: MenuTarget = { kind: 'session', value: { sessionId: SessionId('background'), displayTitle: 'Background' } },
+) {
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
   const registry = new MenuRegistry(vi.fn())
@@ -31,7 +44,6 @@ function bench() {
   const actions = { pinSession: vi.fn(), unpinSession: vi.fn(), archiveSession: vi.fn(), unarchiveSession: vi.fn(),
     forkSession: vi.fn(), requestSessionRename: vi.fn(), copySessionId: vi.fn(async () => {}) }
   const fiber = ctx.plugin({ apply: (plugin: Context) => { registerSessionMenus(plugin, actions) } })
-  const target = { kind: 'session' as const, value: { sessionId: SessionId('background'), displayTitle: 'Background' } }
   const open = () => registry.resolve(target)
   return { ctx, fiber, registry, locale, list, access, actions, target, open }
 }
@@ -93,5 +105,76 @@ it('reacts to permission and locale updates, prevents withdrawn actions, and dis
   menu.select('session.id/copy')
   expect(b.actions.copySessionId).not.toHaveBeenCalled()
   expect(menu.source.getSnapshot()).toEqual([])
+  menu.dispose()
+})
+
+/**
+ * A control-plane row: the Session lives in another instance, so this Client
+ * has no catalog row, no local grant, and no local pin/archive membership for
+ * it. Everything the menu needs arrives on the target.
+ */
+const FEDERATED = {
+  kind: 'session' as const,
+  value: { sessionId: SessionId('alpha:s-1'), displayTitle: 'Remote session' },
+}
+
+it('offers every federated action although the local grants snapshot never lists the key', async () => {
+  const b = bench(FEDERATED)
+  await b.fiber.await()
+  const menu = b.open()
+  // The owning instance decides access when the forwarded call arrives.
+  for (const action of [
+    'session/rename', 'session/fork',
+    'workspace/pinSession', 'workspace/unpinSession',
+    'workspace/archiveSession', 'workspace/unarchiveSession',
+  ]) b.access(action).set(false)
+
+  expect(menu.source.getSnapshot().map(item => item.id)).toEqual([
+    'session.pin/pin', 'session.rename/rename', 'session.fork/fork',
+    'session.id/copy', 'session.archive/archive',
+  ])
+
+  for (const id of ['session.pin/pin', 'session.fork/fork', 'session.archive/archive']) b.open().select(id)
+  expect(b.actions.pinSession).toHaveBeenCalledWith('alpha:s-1')
+  expect(b.actions.forkSession).toHaveBeenCalledWith('alpha:s-1')
+  expect(b.actions.archiveSession).toHaveBeenCalledWith('alpha:s-1')
+  menu.dispose()
+})
+
+it('reads pin and archive state from the target instead of the local catalog', async () => {
+  const pinned = bench({ kind: 'session', value: { ...FEDERATED.value, pinned: true } })
+  await pinned.fiber.await()
+  const menu = pinned.open()
+  expect(menu.source.getSnapshot()[0]).toMatchObject({ label: 'Unpin session' })
+  menu.select('session.pin/pin')
+  expect(pinned.actions.unpinSession).toHaveBeenCalledWith('alpha:s-1')
+  menu.dispose()
+
+  const archived = bench({ kind: 'session', value: { ...FEDERATED.value, archived: true } })
+  await archived.fiber.await()
+  const restore = archived.open()
+  // An archived Session cannot be pinned; the archive action flips to restore.
+  expect(restore.source.getSnapshot().some(item => item.id === 'session.pin/pin')).toBe(false)
+  expect(restore.source.getSnapshot().at(-1)).toMatchObject({ label: 'Unarchive session' })
+  restore.select('session.archive/archive')
+  expect(archived.actions.unarchiveSession).toHaveBeenCalledWith('alpha:s-1')
+  restore.dispose()
+})
+
+it('disables every Session action and names the reason while the owner is unavailable', async () => {
+  const b = bench({ kind: 'session', value: { ...FEDERATED.value, unavailableReason: 'Instance Connecting' } })
+  await b.fiber.await()
+  const menu = b.open()
+  const views = menu.source.getSnapshot()
+  expect(views[0]).toMatchObject({
+    id: 'session.unavailable/unavailable',
+    label: 'Session actions are unavailable: Instance Connecting',
+    disabled: true,
+  })
+  for (const id of ['session.pin/pin', 'session.rename/rename', 'session.fork/fork', 'session.archive/archive']) {
+    expect(views.find(item => item.id === id)).toMatchObject({ disabled: true })
+  }
+  // Copying the key needs no instance, so it stays available.
+  expect(views.find(item => item.id === 'session.id/copy')).not.toHaveProperty('disabled')
   menu.dispose()
 })

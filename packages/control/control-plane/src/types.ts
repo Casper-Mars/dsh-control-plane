@@ -31,6 +31,19 @@ export interface SessionRow {
   readonly running: boolean
   /** Whether this session currently owns a live agent. */
   readonly agentAvailable?: boolean | undefined
+  /**
+   * The owning instance lists this Session in its Workspace pin set. Present
+   * only when true: the field is a value the control plane learned from the
+   * instance's `workspace/follow` baseline, and absence means "not pinned" (or
+   * "not known yet", which reads the same way to the menu).
+   */
+  readonly pinned?: boolean | undefined
+  /**
+   * The owning instance lists this Session in its archive set. The tree drops
+   * archived rows so they disappear from the sidebar exactly as they do in the
+   * official Workspace browser.
+   */
+  readonly archived?: boolean | undefined
 }
 
 /** One session row in the composed tree. */

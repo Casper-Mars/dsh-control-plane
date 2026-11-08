@@ -35,6 +35,7 @@
  * that owns `aria-expanded`, with no composite widget semantics to maintain.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
@@ -44,6 +45,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ContextMenuBindings, UseContextMenu } from '@deepseek-ai/dsh-client-ui-context-menu/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import css from './InstanceGroups.module.css'
 
 /** Reachability of one configured instance; mirrors the control plane's `UpstreamState`. */
@@ -59,6 +62,10 @@ export interface InstanceSessionView {
   readonly title?: string | undefined
   /** Whether an agent turn is currently running. */
   readonly running: boolean
+  /** Whether the owning instance lists this Session in its pin set. */
+  readonly pinned?: boolean | undefined
+  /** Whether the owning instance lists this Session in its archive set. */
+  readonly archived?: boolean | undefined
   /** Last update time, epoch milliseconds. */
   readonly updatedAt: number
 }
@@ -174,6 +181,11 @@ export interface InstanceGroupsReaders {
 export interface InstanceGroupsProps extends InstanceGroupsReaders {
   /** Poll period in milliseconds. */
   readonly intervalMs?: number
+  /**
+   * The shell's menu bindings (a root standard prop on the slot face). Missing
+   * only in isolated fixtures, where rows simply carry no context menu.
+   */
+  readonly useContextMenu?: UseContextMenu | undefined
 }
 
 /**
@@ -430,11 +442,15 @@ function subscribeNothing(): () => void {
  * @returns the slot component.
  */
 export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
-  return function ControlPlaneInstanceGroups({ t, wide }: { t: TranslateNS<'sidebar'>; wide: boolean }) {
+  return function ControlPlaneInstanceGroups({ t, wide, useContextMenu }: {
+    t: TranslateNS<'sidebar'>
+    wide: boolean
+    useContextMenu?: UseContextMenu | undefined
+  }) {
     // The rail has no room for the rows (the same reason the workspace browser
     // swaps to a compact control there), so folding the column unmounts the
     // list and stops its poll; expanding reads a fresh frame.
-    return wide ? <InstanceGroups {...readers} t={t} /> : null
+    return wide ? <InstanceGroups {...readers} t={t} useContextMenu={useContextMenu} /> : null
   }
 }
 
@@ -450,8 +466,11 @@ export function instanceGroupsSlot(readers: InstanceGroupsReaders) {
  */
 export function InstanceGroups({
   fetchTree, retry, createSession, refreshTree, openSession, currentSession, events,
-  intervalMs = DEFAULT_POLL_INTERVAL_MS, t,
+  intervalMs = DEFAULT_POLL_INTERVAL_MS, t, useContextMenu,
 }: InstanceGroupsProps & { t: TranslateNS<'sidebar'> }) {
+  // Ordinary function, not a React Hook: the shell hands in one binding set for
+  // the plugin lifetime, so reading it per render is the supported usage.
+  const menu = useContextMenu?.()
   const [groups, setGroups] = useState<readonly InstanceGroupView[]>()
   // Instance ids whose retry is still running: the button shows progress and
   // refuses a second click until the attempt settles.
@@ -777,6 +796,14 @@ export function InstanceGroups({
       {groups.map((group) => {
         const expanded = !disclosureState.collapsedInstances.includes(group.instanceId)
         const stateLabel = t(`instances.state.${group.state}`)
+        // A Session operation is an RPC to the owning instance. While that
+        // instance is not connected the menu still opens (a connecting group
+        // keeps its rows), but every action is disabled and this reason is the
+        // row the menu leads with — no operation is offered that would fail on
+        // its first forwarded call.
+        const unavailableReason = group.state === 'connected'
+          ? undefined
+          : t('instances.actionUnavailable', { state: stateLabel })
         return (
           <div key={group.instanceId} className={css.group}>
             <button
@@ -845,6 +872,8 @@ export function InstanceGroups({
                 current={currentId}
                 onOpen={open}
                 onCreate={() => { createSessionIn(group.instanceId, workspace.key) }}
+                getTriggerProps={menu?.getTriggerProps}
+                unavailableReason={unavailableReason}
                 t={t}
               />
             ))}
@@ -908,12 +937,14 @@ function InstanceOffline({ group, retrying, onRetry, t }: {
  * @param props.current - federated key of the Session the main view shows.
  * @param props.onOpen - opens one row's Session by its complete federated key.
  * @param props.onCreate - creates a Session in this workspace.
+ * @param props.getTriggerProps - menu bindings for one Session row, when the shell provides them.
+ * @param props.unavailableReason - why Session operations cannot run right now, when they cannot.
  * @param props.t - sidebar dictionary.
  * @returns the workspace block.
  */
 function WorkspaceGroup({
   workspace, canCreate, creating, createFailure,
-  state, now, current, onOpen, onCreate, t,
+  state, now, current, onOpen, onCreate, getTriggerProps, unavailableReason, t,
 }: {
   workspace: InstanceWorkspaceView
   canCreate: boolean
@@ -924,6 +955,8 @@ function WorkspaceGroup({
   current: string | undefined
   onOpen: (key: string) => void
   onCreate: () => void
+  getTriggerProps: ContextMenuBindings['getTriggerProps'] | undefined
+  unavailableReason: string | undefined
   t: TranslateNS<'sidebar'>
 }) {
   const expanded = !state.collapsedWorkspaces.includes(workspace.key)
@@ -995,6 +1028,29 @@ function WorkspaceGroup({
       {expanded && sessions.map((session) => {
         const title = sessionTitle(session)
         const selected = session.key === current
+        // The target carries the owner's pin/archive facts: this Client's
+        // Workspace catalog has no row for a federated Session, so the menu
+        // cannot derive them locally. The key stays whole — only the Gateway's
+        // federation router splits the instance prefix.
+        const menuTarget = {
+          kind: 'session' as const,
+          value: {
+            sessionId: session.key as SessionId,
+            displayTitle: title,
+            pinned: session.pinned === true,
+            archived: session.archived === true,
+            ...(unavailableReason === undefined ? {} : { unavailableReason }),
+          },
+        }
+        const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+          if (event.target !== event.currentTarget) return
+          if (event.key !== 'Enter' && event.key !== ' ') return
+          // Consume the press before deciding: a modified chord is not this
+          // row's command, and the native activation must not fire for it.
+          event.preventDefault()
+          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+          onOpen(session.key)
+        }
         return (
           <button
             key={session.key}
@@ -1008,15 +1064,10 @@ function WorkspaceGroup({
             aria-current={selected ? 'true' : undefined}
             title={session.key}
             onClick={() => { onOpen(session.key) }}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget) return
-              if (event.key !== 'Enter' && event.key !== ' ') return
-              // Consume the press before deciding: a modified chord is not this
-              // row's command, and the native activation must not fire for it.
-              event.preventDefault()
-              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-              onOpen(session.key)
-            }}
+            onKeyDown={onKeyDown}
+            // The menu's binding adds the context-menu chord and repeats
+            // `onKeyDown`; without bindings the row keeps plain activation.
+            {...getTriggerProps === undefined ? {} : getTriggerProps(menuTarget, { onKeyDown })}
           >
             <span className={css.slot}>
               <StateDot state={session.running ? 'ongoing' : 'idle'} />

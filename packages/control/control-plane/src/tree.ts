@@ -62,7 +62,12 @@ export function buildTree(
   states: Readonly<Record<string, InstanceStateReport>> = {},
 ): InstanceNode[] {
   return instances.map((instance) => {
-    const rows = sessionsByInstance.get(instance.id) ?? []
+    const all = sessionsByInstance.get(instance.id) ?? []
+    // Archived Sessions leave the tree the moment the owner archives them, the
+    // same rule the official Workspace browser applies. Their rows stay in the
+    // owner's list (so an unarchive brings them back), but a sidebar that kept
+    // them would contradict the menu it just ran.
+    const rows = all.filter(row => row.archived !== true)
     const reported: InstanceStateReport | undefined = states[instance.id]
     const state: UpstreamState = reported?.state ?? 'connected'
     const groups = new Map<string, SessionNode[]>()
@@ -83,7 +88,11 @@ export function buildTree(
       // 占位工作区（实例没有报告 cwd）排在最后
       .sort(([a], [b]) => (a === NO_WORKSPACE ? 1 : b === NO_WORKSPACE ? -1 : a.localeCompare(b)))
       .map(([path, sessions]) => {
-        const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)
+        // Pinned Sessions float to the top of their workspace, the way the
+        // official browser keeps them above the recency list. The owner's pin
+        // set has no order of its own here, so recency breaks the tie.
+        const sorted = [...sessions].sort((a, b) =>
+          Number(b.pinned === true) - Number(a.pinned === true) || b.updatedAt - a.updatedAt)
         return {
           key: qualify(instance.id, path),
           path,

@@ -26,7 +26,26 @@ export type UseContextMenu = () => ContextMenuBindings
 
 /** External plugins extend this map with their own target families. */
 export interface ContextMenuTargetMap {
-  session: { readonly sessionId: SessionId; readonly displayTitle: string }
+  session: {
+    readonly sessionId: SessionId
+    readonly displayTitle: string
+    /**
+     * Authoritative pin state when the surface that owns the target also owns
+     * its state (a control-plane row, whose Session lives in another
+     * instance's Workspace catalog). Omission defers to the local catalog,
+     * which is right for a Session this Client lists itself.
+     */
+    readonly pinned?: boolean
+    /** Authoritative archive state; omission defers to the local catalog. */
+    readonly archived?: boolean
+    /**
+     * Localized reason no Session operation can run right now — the owning
+     * instance is not connected. Contributions render their actions disabled
+     * and repeat this reason instead of offering an operation that would fail
+     * on the first RPC.
+     */
+    readonly unavailableReason?: string
+  }
   file: { readonly sessionId: SessionId; readonly path: string; readonly line?: number; readonly paneId?: PaneId }
   directory: { readonly sessionId: SessionId; readonly path: string }
   url: { readonly sessionId: SessionId; readonly url: string }

@@ -645,6 +645,12 @@ export class ClientSessions implements ISessions {
     const ids: SessionId[] = []
     const byId: Record<SessionId, SessionSummary> = {}
     for (const entry of items) {
+      // `ids` is this Client's local catalog, so an instance-qualified
+      // (federated) identity never becomes a row here (t100638). Its owner
+      // lists it; this Client publishes the identity row only through an
+      // opened (retained) scope below, under `byId` with remote-owned
+      // blankness.
+      if (isFederatedSessionId(entry.sessionId)) continue
       ids.push(entry.sessionId)
       byId[entry.sessionId] = {
         id: entry.sessionId,

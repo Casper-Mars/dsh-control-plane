@@ -95,7 +95,13 @@ export class ControlPlane extends TypertRemoteService {
   private readonly changeListeners = new Set<(key: string, kind: SessionChange) => void>()
 
   /** Last composed view per instance, used to diff refresh passes. */
-  private readonly previous = new Map<string, Map<string, { updatedAt: number; running: boolean }>>()
+  private readonly previous = new Map<string, Map<string, {
+    updatedAt: number
+    running: boolean
+    title: string
+    pinned: boolean
+    archived: boolean
+  }>>()
 
   /** Push fan-out for the `events` stream: status, change, states, and tree frames. */
   private readonly eventHub = new ControlPlaneEventHub()
@@ -503,8 +509,26 @@ export class ControlPlane extends TypertRemoteService {
 
   /** Compare one instance's fresh list with the previous pass and emit changes. */
   private diff(instanceId: string, rows: readonly SessionRow[]): void {
-    const next = new Map<string, { updatedAt: number; running: boolean }>()
-    for (const row of rows) next.set(row.sessionId, { updatedAt: row.updatedAt, running: row.running })
+    const next = new Map<string, {
+      updatedAt: number
+      running: boolean
+      title: string
+      pinned: boolean
+      archived: boolean
+    }>()
+    for (const row of rows) {
+      next.set(row.sessionId, {
+        updatedAt: row.updatedAt,
+        running: row.running,
+        title: row.title ?? '',
+        // Title, pin, and archive flips are visible state the sidebar must
+        // re-read: a rename replaces the row title, a pin flips its menu
+        // label, an archive removes the row. None of them moves `updatedAt`,
+        // so the diff carries them explicitly.
+        pinned: row.pinned === true,
+        archived: row.archived === true,
+      })
+    }
     const before = this.previous.get(instanceId)
 
     if (before !== undefined) {
@@ -512,7 +536,10 @@ export class ControlPlane extends TypertRemoteService {
         const old = before.get(sessionId)
         if (old === undefined) this.emitChange(instanceId, sessionId, 'added')
         else if (old.running !== value.running) this.publishStatus(instanceId, sessionId, value.running)
-        else if (old.updatedAt !== value.updatedAt) this.emitChange(instanceId, sessionId, 'updated')
+        else if (old.updatedAt !== value.updatedAt || old.title !== value.title
+          || old.pinned !== value.pinned || old.archived !== value.archived) {
+          this.emitChange(instanceId, sessionId, 'updated')
+        }
       }
       for (const sessionId of before.keys()) {
         if (!next.has(sessionId)) this.emitChange(instanceId, sessionId, 'removed')

@@ -26,7 +26,7 @@ import { ProjectionValueStore } from './projection-store.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionTarget } from '../contract/sessions.ts'
-import { isFederatedSessionId } from '../federation.ts'
+import { isFederatedSessionId, qualifyFederatedSessionId } from '../federation.ts'
 
 function sessionSeqCursor(value: number): SessionSeqCursor {
   return value === -1 ? -1 : SessionSeq(value)
@@ -543,12 +543,20 @@ export class SessionManager {
   }
 
   /**
-   * Contract session.fork; on success merge the child into summaries
-   * immediately (same synchronous-addressability guarantee as create).
-   * Blankness starts provisionally true so the authoritative Host summary can
-   * preserve it or lower it after an exact cut before the first `turn/start`;
-   * the fork has no durable source relationship. A child published before Workspace
-   * attachment fails is also reconciled into the list.
+   * Contract session.fork; on success merge a locally owned child into
+   * summaries immediately (same synchronous-addressability guarantee as
+   * create). Blankness starts provisionally true so the authoritative Host
+   * summary can preserve it or lower it after an exact cut before the first
+   * `turn/start`; the fork has no durable source relationship. A local child
+   * published before Workspace attachment fails is also reconciled into the
+   * list.
+   *
+   * A federated source names a Session on another instance, so its child
+   * belongs to that instance's catalog: this Client records no placeholder for
+   * it (the same rule as a federated create). A placeholder under the
+   * qualified key would surface a phantom row in the local list, whose `ids`
+   * only names locally owned Sessions. The control plane's tree refresh
+   * carries the qualified row instead.
    * @param opts - source session, optional exact inclusive boundary seq, and permission to start migration.
    * @returns the fork result (the child session id).
    */
@@ -556,6 +564,7 @@ export class SessionManager {
     opts: { sessionId: SessionId; atSeq?: SessionSeq; allowMigration?: boolean },
   ): Promise<RemoteResult<{ sessionId: SessionId }>> {
     const source = this.summaries.find(s => s.sessionId === opts.sessionId)
+    const federated = isFederatedSessionId(opts.sessionId)
     const result = await this.remote.session.fork({
       sessionId: opts.sessionId,
       ...opts.atSeq === undefined ? {} : { atSeq: opts.atSeq },
@@ -564,13 +573,24 @@ export class SessionManager {
     const childId = result.ok
       ? result.value.sessionId
       : workspaceAttachSessionId(result.error)
-    if (childId !== undefined) {
+    // The owner answers with its bare child id, so every later call (the
+    // fork-title rename, navigation, retention) must address it through the
+    // source's prefix; a local source leaves it untouched.
+    const qualifiedChildId = childId === undefined
+      ? undefined
+      : qualifyFederatedSessionId(opts.sessionId, childId)
+    if (qualifiedChildId !== undefined && !federated) {
       this.recordMutation({ kind: 'placeholder', summary: { agentAvailable: true,
-        sessionId: childId, updatedAt: Date.now(), running: false, blank: true,
+        sessionId: qualifiedChildId as SessionId, updatedAt: Date.now(), running: false, blank: true,
         ...(source?.cwd !== undefined ? { cwd: source.cwd } : {}),
       } })
     }
-    return result
+    // A partial success (the Session exists but its Workspace attach failed)
+    // still reports the failure, while a local source keeps its placeholder.
+    if (!result.ok || qualifiedChildId === undefined) return result
+    return qualifiedChildId === childId
+      ? result
+      : { ok: true as const, value: { sessionId: qualifiedChildId as SessionId } }
   }
 
   /**

@@ -79,6 +79,14 @@ export class Upstream {
   private readonly descriptors = new Map<string, InvocationDescriptor>()
   /** In-flight lazy mount of the workspace namespace, if it was ever needed. */
   private workspaceMount: Promise<void> | undefined
+  /** Startup of the Workspace pin/archive follow, once per connection lifetime. */
+  private workspaceSets: Promise<void> | undefined
+  /** Ends the current `workspace/follow` generation on dispose. */
+  private stopWorkspaceFollow: (() => void) | undefined
+  /** Instance-local Session ids the owner lists as pinned. */
+  private readonly pinned = new Set<string>()
+  /** Instance-local Session ids the owner lists as archived. */
+  private readonly archived = new Set<string>()
   /** Forwards federated calls over this connection. */
   private readonly relay: RemoteRelay
   private stopStatus: (() => void) | undefined
@@ -312,6 +320,11 @@ export class Upstream {
    */
   async listSessions(signal?: AbortSignal): Promise<SessionRow[]> {
     try {
+      // Pin/archive state is not part of `session/list`; the Workspace follow
+      // carries it. Starting the follow here (never awaiting it) means the
+      // first tree can be a tick early on those two flags — the next compose
+      // corrects them and the diff announces the change.
+      this.ensureWorkspaceSets()
       // `session/list` takes no arguments; the generated client omits the
       // reserved request slot when it is empty.
       const remote = (this.root as unknown as {
@@ -320,11 +333,45 @@ export class Upstream {
       const value = unwrap(await remote.session.list({}, signal))
       this.state = 'connected'
       this.lastError = undefined
-      return value.items.map(toSessionRow)
+      return value.items.map(raw => toSessionRow(raw, this.pinned, this.archived))
     } catch (error) {
       this.state = 'unreachable'
       this.lastError = message(error)
       throw error
+    }
+  }
+
+  /**
+   * Keep the owner's Workspace pin/archive sets current for this connection.
+   *
+   * `workspace/follow` is the only read that carries both sets, and it is a
+   * stream. One generation per connection feeds them for its lifetime; a
+   * generation that ends (an instance restart) is retried by the next compose
+   * because the startup promise is cleared with it.
+   */
+  private ensureWorkspaceSets(): void {
+    if (this.workspaceSets !== undefined) return
+    this.workspaceSets = this.followWorkspaceSets().catch(() => {
+      // A failed workspace read says nothing about the sessions list, which
+      // owns reachability; forget the attempt so a later compose retries.
+      this.workspaceSets = undefined
+    })
+  }
+
+  /** Consume one `workspace/follow` generation, refreshing both sets in place. */
+  private async followWorkspaceSets(): Promise<void> {
+    await this.mountNamespace('workspace')
+    const remote = (this.root as unknown as {
+      remote: { workspace: { follow: (signal: AbortSignal) => AsyncIterable<WorkspaceFollowFrame> } }
+    }).remote
+    const controller = new AbortController()
+    this.stopWorkspaceFollow = () => { controller.abort() }
+    try {
+      await drainWorkspaceSets(remote.workspace.follow(controller.signal), this.archived, this.pinned)
+    } finally {
+      this.stopWorkspaceFollow = undefined
+      // The generation is over: the next compose may start another one.
+      this.workspaceSets = undefined
     }
   }
 
@@ -346,6 +393,8 @@ export class Upstream {
     try {
       this.stopStatus?.()
       this.stopStatus = undefined
+      this.stopWorkspaceFollow?.()
+      this.stopWorkspaceFollow = undefined
       await this.mounted?.()
     } finally {
       await this.root.fiber.dispose()
@@ -404,22 +453,107 @@ export interface RawSummary {
 }
 
 /**
+ * The `workspace/follow` frames this connection reads.
+ *
+ * Only the two Session sets matter here: the workspace tree itself comes from
+ * `session/list`, and ordering is the owner's business. Frames that carry
+ * neither set are accepted and ignored.
+ */
+export interface WorkspaceSetsValue {
+  readonly pinnedSessionIds?: readonly unknown[] | undefined
+  readonly archivedSessionIds?: readonly unknown[] | undefined
+}
+
+/** One frame of the Workspace state stream. */
+export type WorkspaceFollowFrame =
+  | { readonly type: 'baseline'; readonly value: WorkspaceSetsValue }
+  | { readonly type: 'replace'; readonly value: WorkspaceSetsValue }
+  | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly unknown[] }
+  | { readonly type: 'archived'; readonly archivedSessionIds: readonly unknown[] }
+  | { readonly type: 'upsert'; readonly workspace?: unknown }
+  | { readonly type: 'remove'; readonly workspaceId?: unknown }
+  | { readonly type: 'order'; readonly workspaceIds?: readonly unknown[] }
+
+/**
+ * Consume a Workspace generation into the cached pin/archive sets.
+ *
+ * Split from the connection so the fold itself is exercised without a live
+ * stream: every frame kind and the end of the generation are ordinary code.
+ * @param frames - one `workspace/follow` generation.
+ * @param archived - archive set the frames replace.
+ * @param pinned - pin set the frames replace.
+ * @returns when the generation ends.
+ */
+export async function drainWorkspaceSets(
+  frames: AsyncIterable<WorkspaceFollowFrame>, archived: Set<string>, pinned: Set<string>,
+): Promise<void> {
+  for await (const frame of frames) applyWorkspaceFrame(frame, archived, pinned)
+}
+
+/**
+ * Fold one Workspace frame into the cached pin/archive sets.
+ * @param frame - frame from the owner's `workspace/follow` generation.
+ * @param archived - archive set to replace when the frame carries one.
+ * @param pinned - pin set to replace when the frame carries one.
+ */
+export function applyWorkspaceFrame(
+  frame: WorkspaceFollowFrame, archived: Set<string>, pinned: Set<string>,
+): void {
+  switch (frame.type) {
+    case 'baseline':
+    case 'replace':
+      replaceIds(archived, frame.value.archivedSessionIds)
+      replaceIds(pinned, frame.value.pinnedSessionIds)
+      return
+    case 'archived':
+      replaceIds(archived, frame.archivedSessionIds)
+      return
+    case 'pinned':
+      replaceIds(pinned, frame.pinnedSessionIds)
+      return
+    default:
+      // Workspace upserts, removals, and ordering: nothing the tree reads.
+      return
+  }
+}
+
+/**
+ * Replace one cached set with the ids a frame reported.
+ * @param target - set to overwrite in place.
+ * @param ids - ids from the frame; undefined leaves the set empty.
+ */
+function replaceIds(target: Set<string>, ids: readonly unknown[] | undefined): void {
+  target.clear()
+  for (const id of ids ?? []) target.add(String(id))
+}
+
+/**
  * Project one upstream summary onto the row the sidebar consumes. The title is
  * optional: the projection reports `null` before a title exists, and a blank
  * string never becomes a row field, so the sidebar keeps its id fallback.
  * @param raw - one `SessionSummary` as the Host sent it.
- * @returns the normalized row; `title` is present only when non-blank.
+ * @param pinned - the owner's pin set, from `workspace/follow`.
+ * @param archived - the owner's archive set, from `workspace/follow`.
+ * @returns the normalized row; `title`/`pinned`/`archived` are present only
+ *   when they carry information.
  */
-export function toSessionRow(raw: RawSummary): SessionRow {
+export function toSessionRow(
+  raw: RawSummary,
+  pinned: ReadonlySet<string> = new Set(),
+  archived: ReadonlySet<string> = new Set(),
+): SessionRow {
   const candidate = raw.projections?.values?.title
   const title = typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : undefined
+  const sessionId = String(raw.sessionId)
   return {
-    sessionId: String(raw.sessionId),
+    sessionId,
     cwd: raw.cwd,
     updatedAt: Number(raw.updatedAt),
     running: raw.running === true,
     agentAvailable: raw.agentAvailable === true ? true : raw.agentAvailable === false ? false : undefined,
     ...(title === undefined ? {} : { title }),
+    ...(pinned.has(sessionId) ? { pinned: true } : {}),
+    ...(archived.has(sessionId) ? { archived: true } : {}),
   }
 }
 

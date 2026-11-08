@@ -24,3 +24,21 @@ export function isFederatedSessionId(id: string): boolean {
   const separator = id.indexOf(':')
   return separator > 0 && separator < id.length - 1
 }
+
+/**
+ * Qualify an id an instance reported for one of its own Sessions.
+ *
+ * A forwarded RPC answers with the owner-local id: `session/fork` returns the
+ * child's bare id even when the source was a federated key. Every follow-up
+ * call must carry the same instance prefix, or the Gateway would resolve the
+ * bare id against this Client's own Host — a different Session that may well
+ * exist. A local source (no prefix) leaves the answer untouched.
+ * @param source - Session identity the answering instance was asked about.
+ * @param child - owner-local id the instance reported.
+ * @returns the child id qualified with the source's instance, when it has one.
+ */
+export function qualifyFederatedSessionId(source: string, child: string): string {
+  if (!isFederatedSessionId(source) || isFederatedSessionId(child)) return child
+  const separator = source.indexOf(':')
+  return `${source.slice(0, separator)}:${child}`
+}

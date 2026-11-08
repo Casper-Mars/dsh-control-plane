@@ -3,14 +3,15 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, onTestFinished } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { RemoteMock } from '@deepseek-ai/dsh-remote-mock'
+import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import {
   createClientTest, webApp, type TestClient,
 } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { ClientSessions } from '../src/client/sessions/service.ts'
-import { isFederatedSessionId } from '../src/client/federation.ts'
+import { isFederatedSessionId, qualifyFederatedSessionId } from '../src/client/federation.ts'
 import type { SessionFollowRequest } from '../src/types.ts'
-import { FOLLOW, sessionWorld } from './remote/session.client.ts'
+import { FOLLOW, err, sessionWorld } from './remote/session.client.ts'
 
 const FEDERATED = SessionId('alpha:s-1')
 const LOCAL = SessionId('local-s1')
@@ -35,6 +36,21 @@ describe('isFederatedSessionId', () => {
     ['alpha:', false],
   ])('%j → %s', (id, expected) => {
     expect(isFederatedSessionId(id)).toBe(expected)
+  })
+})
+
+describe('qualifyFederatedSessionId', () => {
+  it.each([
+    ['alpha:parent-1', 'child-1', 'alpha:child-1'],
+    // A local id may itself contain a colon; only the first one is the instance.
+    ['alpha:parent-1:tail', 'child-1', 'alpha:child-1'],
+    ['parent-1', 'child-1', 'child-1'],
+    ['', 'child-1', 'child-1'],
+    [':parent-1', 'child-1', 'child-1'],
+    ['alpha:', 'child-1', 'child-1'],
+    ['alpha:parent-1', 'beta:child-1', 'beta:child-1'],
+  ])('%j + %j → %j', (source, child, expected) => {
+    expect(qualifyFederatedSessionId(source, child)).toBe(expected)
   })
 })
 
@@ -87,5 +103,88 @@ describe('federated Session targets', () => {
 
     expect(() => b.svc.retain(LOCAL, { source: 'mainView' })).toThrow('unknown session')
     expect(() => b.svc.retain(SessionId('alpha:'), { source: 'mainView' })).toThrow('unknown session')
+  })
+})
+
+
+describe('federated fork catalog boundary', () => {
+  it('returns the fully qualified child and publishes no local catalog row', async ({ mock, start, remote }) => {
+    const b = await bench(mock, start)
+    remote.session.fork.mockResolvedValueOnce(ok({ sessionId: SessionId('child-1') }))
+    const child = SessionId('alpha:child-1')
+
+    // The owner answers with its bare child id; the Client has to hand back the
+    // qualified key so every later RPC addresses the owning instance.
+    await expect(b.svc.fork({ sessionId: FEDERATED })).resolves.toBe(child)
+
+    const list = b.svc.list.getSnapshot()
+    // t100638: `ids` is the local catalog and never names another instance.
+    expect(list.ids).toEqual([])
+    // Nothing local opened the child yet, so no identity row exists either —
+    // the owning instance (through the control-plane tree) carries its row.
+    expect(list.byId[child]).toBeUndefined()
+  })
+
+  it('publishes an opened federated fork child only under byId, never as a local blank', async ({ mock, start, remote }) => {
+    const b = await bench(mock, start)
+    remote.session.fork.mockResolvedValueOnce(ok({ sessionId: SessionId('child-1') }))
+    const child = SessionId('alpha:child-1')
+
+    await b.svc.fork({ sessionId: FEDERATED })
+    const reference = b.svc.retain(child, { source: 'mainView' })
+    onTestFinished(() => { reference.release() })
+    await reference.ready
+
+    const list = b.svc.list.getSnapshot()
+    expect(list.ids).toEqual([])
+    // The retained identity row backs main-Session resolution; its blankness is
+    // remote-owned, so the shell can never reuse it as a local blank.
+    expect(list.byId[child]?.blank).toBe(false)
+    expect(list.byId[child]?.retainedBy).toEqual({ mainView: 1 })
+  })
+
+  it('publishes no row for the child a partially failed federated fork still created', async ({ mock, start, remote }) => {
+    const b = await bench(mock, start)
+    remote.session.fork.mockResolvedValueOnce(err(new RemoteError('session/workspace-attach-failed', 'forked but unattached', {
+      sessionId: SessionId('child-2'), workspaceId: 'w1',
+    })))
+
+    await expect(b.svc.fork({ sessionId: FEDERATED })).rejects.toMatchObject({ name: 'SessionForkError' })
+
+    const list = b.svc.list.getSnapshot()
+    expect(list.ids).toEqual([])
+    expect(list.byId[SessionId('alpha:child-2')]).toBeUndefined()
+  })
+
+  it('still catalogs a local fork child as a reusable blank', async ({ mock, start, remote }) => {
+    const b = await bench(mock, start)
+    remote.session.fork.mockResolvedValueOnce(ok({ sessionId: SessionId('child-local') }))
+
+    await expect(b.svc.fork({ sessionId: LOCAL })).resolves.toBe(SessionId('child-local'))
+
+    // No prefix: the established local behaviour keeps the provisional
+    // placeholder so the child is addressable and reusable before its first
+    // Host summary lands.
+    const list = b.svc.list.getSnapshot()
+    expect(list.ids).toEqual([SessionId('child-local')])
+    expect(list.byId[SessionId('child-local')]?.blank).toBe(true)
+  })
+
+  it('keeps ids local even when a list frame names a federated identity', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+
+    b.svc.handleSessionAdded({
+      agentAvailable: true,
+      sessionId: FEDERATED,
+      updatedAt: 1,
+      running: false,
+      blank: true,
+    })
+
+    // Defence in depth for the t100638 invariant: whatever reaches the manager,
+    // the projection never promotes a federated identity into the local catalog.
+    const list = b.svc.list.getSnapshot()
+    expect(list.ids).toEqual([])
+    expect(list.byId[FEDERATED]).toBeUndefined()
   })
 })

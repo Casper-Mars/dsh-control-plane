@@ -393,6 +393,11 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async pinSession(sessionId: SessionId): Promise<void> {
     await this.workspaces.pinSession(sessionId)
+    // A federated Session is ordered by the instance that owns it: this
+    // Client's Workspace accounts hold no row for the key, and writing one
+    // would file it under "Ungrouped" in this Client's own saved order. The
+    // pin set on the owner already decides where the Session shows up.
+    if (isFederatedSessionId(sessionId)) return
     const { items, pinnedSessionIds, archivedSessionIds } = this.workspaces.list.getSnapshot()
     this.view.pinSessionOrder(
       sessionId,

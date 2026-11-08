@@ -44,6 +44,16 @@
 - 订阅存在期间由事件流持有 2s `startPolling()`（宿主已自行启动时不会抢占；最后一个订阅者离开才停），断线重订阅仍从全量树起步。
 - 侧边栏仍保留 30s 兜底轮询；推送只是快路径。
 
+### 3.7 会话行右键菜单（t100643）
+
+- 侧边栏会话行把**完整的联邦键**（`<instanceId>:<sessionId>`）交给官方 `ctx.contextMenus` 的 `session` 目标，因此复用的是 ui-workspace 已有的 `session.pin/rename/fork/archive` 贡献，不另造浮层。
+- 目标额外携带三项只能在控制面知道的展示事实：`pinned`、`archived`（来自归属实例的 Workspace pin/archive 集）与 `unavailableReason`（实例非 `connected` 时的本地化原因）。ui-workspace 优先读目标上的值，缺省才回落本地 catalog —— 普通 dsh 的会话行不带这些字段，行为不变。
+- `pin`/`archive` 的权威集来自每条连接上的 `workspace/follow`：`session/list` 不含这两个字段，`Upstream` 每连接维持一条 follow 世代把两个集合缓存在本地，`listSessions()` 投影到 `SessionRow.pinned/archived`（为真才出现在行上）。follow 失败不影响可达性判定。
+- `archived` 的行为与官方一致：`buildTree` 直接把归档行从树里去掉（下一次 diff 会推 `updated`，侧边栏随即刷新）；取消归档后行会回来。
+- `diff` 除了 `updatedAt`/`running` 还比较 `title`/`pinned`/`archived`：重命名、置顶、归档都不会动 `updatedAt`，不比较就只能等 30s 兜底轮询。
+- 离线：`unreachable` 实例仍按既有规则不渲染会话行（比置灰更强）；`connecting`（或刚掉线的帧）仍显示行，但四个操作全部 `disabled`，菜单首行用 `unavailableReason` 说明原因；「复制 Session ID」不需要实例，保持可用。
+- 联邦键不查本地 grants（本地授权快照只描述本 Host 自己的资源），归属实例在转发调用到达时自行鉴权；`session/fork` 返回的裸子 id 由 session 客户端补回实例前缀，避免后续调用被解析到本 Host 的同名会话。
+
 ### 3.5 离线态与重连（S3-03）
 
 - `controlPlane/tree` 的每个实例节点带 `state`（`connecting` / `connected` / `unreachable`）与可选 `error`；侧边栏以这一帧为准，不再单独轮询 `instances`。

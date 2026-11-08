@@ -43,6 +43,12 @@
     },
     {
       "path": "../product-analytics/tsconfig.client.json"
+    },
+    {
+      "path": "../../core/session"
+    },
+    {
+      "path": "../ui-context-menu"
     }
   ]
 }
