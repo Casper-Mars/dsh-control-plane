@@ -53,5 +53,5 @@ else
 fi
 
 # 3) 起服务。
-echo "控制面：http://127.0.0.1:$PORT/  （实例文件：$INSTANCES_FILE）"
+echo "控制面：http://127.0.0.1:$PORT/  （实例文件：${INSTANCES_FILE} ）"
 exec pnpm dsh --profile web --no-open --port "$PORT" --config "$INSTANCES_FILE"
