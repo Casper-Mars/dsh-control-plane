@@ -97,6 +97,7 @@ export class RemoteRelay {
     signal: AbortSignal,
   ): Promise<unknown> {
     const descriptor = await this.resolve(endpoint, false)
+    this.requireScopeWire(descriptor, endpoint, args)
     const result = await descriptor.invoke(this.options.remote() as TypertClientRemote, args, signal)
     if (result.ok) return result.value
     const failure = result.error
@@ -139,6 +140,7 @@ export class RemoteRelay {
     signal: AbortSignal,
   ): AsyncGenerator {
     const descriptor = await this.resolve(endpoint, true)
+    this.requireScopeWire(descriptor, endpoint, args)
     const opened: unknown = descriptor.invoke(this.options.remote() as TypertClientRemote, args, signal)
     if (!isAsyncIterable(opened)) {
       throw new RemoteError('gateway/result-invalid', `control-plane: ${endpoint} 未返回可迭代的上游流`, {
@@ -179,6 +181,30 @@ export class RemoteRelay {
   }
 
   /**
+   * Whether a scoped call carries the Context identity the browser projected
+   * onto the wire. A forwarded call always does; a hand-written one may not.
+   * @param descriptor - mounted endpoint descriptor.
+   * @param endpoint - canonical Remote endpoint.
+   * @param args - wire arguments after instance-prefix stripping.
+   * @throws RemoteError `gateway/signature-invalid` when the scope wire is absent.
+   */
+  private requireScopeWire(
+    descriptor: InvocationDescriptor,
+    endpoint: string,
+    args: Readonly<Record<string, unknown>>,
+  ): void {
+    const wire = descriptor.scope?.wire
+    if (wire === undefined) return
+    const value = args[wire]
+    if (typeof value === 'string' && value !== '') return
+    throw new RemoteError(
+      'gateway/signature-invalid',
+      `control-plane: 端点 ${endpoint} 缺少 ${wire} 投影，无法跨实例转发`,
+      { endpoint, field: wire },
+    )
+  }
+
+  /**
    * Resolve one endpoint's mounted descriptor, mounting its namespace once.
    * @param endpoint - canonical Remote endpoint (`namespace/method`).
    * @param stream - whether the caller opens the stream carrier.
@@ -202,15 +228,11 @@ export class RemoteRelay {
         { endpoint },
       )
     }
-    // A scoped descriptor resolves its lookup argument from a Client Context
-    // the control plane does not own, so it cannot be replayed from the wire.
-    if (descriptor.scope !== undefined) {
-      throw new RemoteError(
-        'gateway/method-unavailable',
-        `control-plane: 端点 ${endpoint} 依赖 Client Context 投影，无法跨实例转发`,
-        { endpoint },
-      )
-    }
+    // A scoped descriptor (an Agent lookup) still travels as its wire identity
+    // when the browser calls through a Context: the browser projects that
+    // identity into `agentId` before the call leaves the page, and this
+    // upstream root has no bound Agent, so the generated direct face forwards
+    // the wire value unchanged.
     if ((descriptor.mode === undefined) === stream) {
       throw new RemoteError(
         'gateway/signature-invalid',

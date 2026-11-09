@@ -25,6 +25,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { Peer } from '@deepseek-ai/dsh-client-connection'
 import * as SessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import * as WorkspaceRemote from '@deepseek-ai/dsh-api-workspace-controller/remote'
+import * as CommandsRemote from '@deepseek-ai/dsh-commands/remote'
+import * as SessionReferenceRemote from '@deepseek-ai/dsh-session-reference/remote'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import TypertGatewayService, {
   isFederatedEndpoint,
@@ -54,7 +56,14 @@ const ALPHA = INSTANCES[0] as ResolvedInstance
 const DESCRIPTORS: readonly InvocationDescriptor[] = [
   ...SessionRemote.default.descriptors,
   ...WorkspaceRemote.default.descriptors,
+  ...CommandsRemote.default.descriptors,
+  ...SessionReferenceRemote.default.descriptors,
 ]
+
+/** Namespaces whose identifiers the browser qualifies with an instance prefix. */
+const FEDERATED_NAMESPACES = new Set([
+  'session', 'workspace', 'commands', 'fileReferences', 'sessionReferenceResolver', 'skills',
+])
 
 function descriptorOf(endpoint: string): InvocationDescriptor | undefined {
   return DESCRIPTORS.find(candidate => `${candidate.namespace}/${candidate.method}` === endpoint)
@@ -87,8 +96,8 @@ type IdPath = readonly string[]
 /** Whether a property name is an instance-qualified identifier field. */
 type IdNameTest = (name: string) => boolean
 
-/** Every id the browser qualifies: primary ids, neighbours, and address ids. */
-const ANY_ID: IdNameTest = name => /(?:session|workspace)Id$/i.test(name)
+/** Every id the browser qualifies: primary ids, neighbours, address ids, and Agent ids. */
+const ANY_ID: IdNameTest = name => /(?:session|workspace)Id$/i.test(name) || name === 'agentId'
 
 function collectIdPaths(
   schema: SchemaNode | undefined,
@@ -114,6 +123,9 @@ function collectIdPaths(
 function descriptorIdPaths(descriptor: InvocationDescriptor, names: IdNameTest): IdPath[] {
   const out: IdPath[] = []
   for (const parameter of descriptor.parameters) {
+    // A lookup parameter (an Agent) is itself the identifier, not a field of a
+    // wrapped request object.
+    if (names(parameter.wire)) out.push([parameter.wire])
     const schema = (parameter.codec as { readonly jsonSchema?: unknown }).jsonSchema as SchemaNode | undefined
     collectIdPaths(schema, [parameter.wire], names, out, new Set())
   }
@@ -167,7 +179,7 @@ function contractTableFromSource(): Map<string, IdPath[]> {
 function expectedIdPaths(names: IdNameTest): Map<string, IdPath[]> {
   const expected = new Map<string, IdPath[]>()
   for (const descriptor of DESCRIPTORS) {
-    if (descriptor.namespace !== 'session' && descriptor.namespace !== 'workspace') continue
+    if (!FEDERATED_NAMESPACES.has(descriptor.namespace)) continue
     const endpoint = `${descriptor.namespace}/${descriptor.method}`
     const paths = descriptorIdPaths(descriptor, names)
     if (paths.length > 0) expected.set(endpoint, paths)
@@ -216,7 +228,7 @@ function subagentAddress(prefix: string): Record<string, unknown> {
 }
 
 describe('t100637 / descriptor vs identifier tables', () => {
-  it('lists exactly the real endpoints that declare an instance-qualified id (25/25)', () => {
+  it('lists exactly the real endpoints that declare an instance-qualified id (30/30)', () => {
     const table = contractTableFromSource()
     const expected = expectedIdPaths(ANY_ID)
 
@@ -224,7 +236,7 @@ describe('t100637 / descriptor vs identifier tables', () => {
     const missing = [...expected.keys()].filter(endpoint => !table.has(endpoint))
     const stale = [...table.keys()].filter(endpoint => !expected.has(endpoint))
     expect({ missing, stale }).toEqual({ missing: [], stale: [] })
-    expect(table.size, 'declared endpoints').toBe(25)
+    expect(table.size, 'declared endpoints').toBe(30)
     expect(table.size).toBe(expected.size)
 
     for (const [endpoint, paths] of expected) {
@@ -255,14 +267,14 @@ describe('t100637 / descriptor vs identifier tables', () => {
         checked += 1
       }
     }
-    // 25 endpoints; the neighbour and address endpoints declare more than one
-    // path each (26 session paths + 11 workspace paths).
-    expect(checked).toBe(37)
+    // 30 endpoints; the neighbour and address endpoints declare more than one
+    // path each (26 session paths + 11 workspace paths + 5 agent/skill paths).
+    expect(checked).toBe(42)
   })
 
   it('keeps every real endpoint with no id field local for its well-formed wire args', () => {
     for (const descriptor of DESCRIPTORS) {
-      if (descriptor.namespace !== 'session' && descriptor.namespace !== 'workspace') continue
+      if (!FEDERATED_NAMESPACES.has(descriptor.namespace)) continue
       const endpoint = `${descriptor.namespace}/${descriptor.method}`
       if (descriptorIdPaths(descriptor, ANY_ID).length > 0) continue
       expect(isFederatedEndpoint(endpoint), endpoint).toBe(false)
@@ -431,8 +443,16 @@ function fakeClient(): FakeClient {
     insertBefore: unaryMethod('workspace/insertBefore'),
     insertSessionBefore: unaryMethod('workspace/insertSessionBefore'),
   }
+  // Scoped namespaces: the browser projects its Session Context into `agentId`
+  // before the call leaves the page, so the relay replays the wire value.
+  const commands = {
+    list: unaryMethod('commands/list'),
+    execute: unaryMethod('commands/execute'),
+  }
+  const fileReferences = { list: unaryMethod('fileReferences/list') }
+  const sessionReferenceResolver = { candidates: unaryMethod('sessionReferenceResolver/candidates') }
   return {
-    remote: { session, workspace },
+    remote: { session, workspace, commands, fileReferences, sessionReferenceResolver },
     unary,
     streams,
     errors,
@@ -616,6 +636,45 @@ describe('t100637 / real Gateway → ControlPlane → relay → fake Client', ()
       model: 'm-1',
     })
     expect(alpha.unary[2]?.args[0]).toEqual({ workspaceId: '/repo', title: 'Workspace' })
+  })
+
+  it('forwards Agent-scoped catalogs with the projected agentId', async () => {
+    const alpha = fakeClient()
+    const { gateway, peer } = await bench(connectionFactory(new Map([['alpha', alpha], ['beta', fakeClient()]])))
+
+    const commands = await gateway.invoke({
+      peer,
+      namespace: 'commands',
+      method: 'list',
+      args: { agentId: 'alpha:s-1' },
+    })
+    expect(commands).toEqual({ endpoint: 'commands/list', received: 's-1' })
+
+    const files = await gateway.invoke({
+      peer,
+      namespace: 'fileReferences',
+      method: 'list',
+      args: { agentId: 'alpha:s-1', query: 'src/' },
+    })
+    expect(files).toEqual({ endpoint: 'fileReferences/list', received: 's-1' })
+
+    const references = await gateway.invoke({
+      peer,
+      namespace: 'sessionReferenceResolver',
+      method: 'candidates',
+      args: { agentId: 'alpha:s-1', query: 'design' },
+    })
+    expect(references).toEqual({ endpoint: 'sessionReferenceResolver/candidates', received: 's-1' })
+
+    expect(alpha.unary.map(call => call.endpoint)).toEqual([
+      'commands/list', 'fileReferences/list', 'sessionReferenceResolver/candidates',
+    ])
+    // The instance prefix is stripped from the Agent id, never from the query.
+    expect(alpha.unary[1]?.args.slice(0, 2)).toEqual(['s-1', 'src/'])
+    expect(alpha.unary[2]?.args.slice(0, 2)).toEqual(['s-1', 'design'])
+    // Both catalog calls declare cancellation, so the relay appends its signal.
+    expect(alpha.unary[1]?.args[2]).toBeInstanceOf(AbortSignal)
+    expect(alpha.unary[2]?.args[2]).toBeInstanceOf(AbortSignal)
   })
 
   it('forwards streams (follow, observeEvent) keeping address and history siblings', async () => {

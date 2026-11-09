@@ -4,9 +4,9 @@
  * Each instance gets its own Cordis root: the control plane's own host-side
  * services stay untouched, and one instance going away cannot dispose another.
  * The connection is the same client carrier a browser page uses, built for
- * Node (see `socket`/`rpc` seams below). The `session` namespace is mounted at
- * connect; `workspace` is mounted on the first federated call that needs it, so
- * opening a connection never grows a second startup dependency.
+ * Node (see `socket`/`rpc` seams below). The `session`, `commands`, and
+ * `sessionReferenceResolver` namespaces are mounted at connect; `workspace` is
+ * mounted on the first federated call that needs it.
  * @module @deepseek-ai/dsh-control-plane/src/upstream
  */
 
@@ -74,7 +74,8 @@ export interface UpstreamTransport {
 export class Upstream {
   readonly instance: ResolvedInstance
   private readonly root: Context
-  private mounted: (() => Promise<void>) | undefined
+  /** Disposers of every namespace mounted at connect. */
+  private readonly mounted: (() => Promise<void>)[] = []
   /** Descriptors of every mounted namespace, keyed by `<namespace>/<method>`. */
   private readonly descriptors = new Map<string, InvocationDescriptor>()
   /** In-flight lazy mount of the workspace namespace, if it was ever needed. */
@@ -203,11 +204,13 @@ export class Upstream {
     // 实例仍要求 launch token 时先换一张 index cookie；免 token 后这段自然失效
     const cookie = transport.fetch === undefined ? await exchangeToken(instance) : undefined
     try {
-      const [connection, gateway, registry, session] = await Promise.all([
+      const [connection, gateway, registry, session, commands, sessionReference] = await Promise.all([
         load<ConnectionClientModule>('@deepseek-ai/dsh-client-connection/client'),
         load<GatewayClientModule>('@deepseek-ai/dsh-api-gateway/client'),
         load<RegistryModule>('@deepseek-ai/dsh-typert-registry'),
         load<RemoteContributionModule>('@deepseek-ai/dsh-api-session-controller/remote'),
+        load<RemoteContributionModule>('@deepseek-ai/dsh-commands/remote'),
+        load<RemoteContributionModule>('@deepseek-ai/dsh-session-reference/remote'),
       ])
       connection.installConnection(root, {
         // 控制面不参与人工审批/提问；events 开启时才加入转发事件的生命周期
@@ -236,8 +239,14 @@ export class Upstream {
           $on: (event: string, listener: (...args: never[]) => void) => () => void
         }
       }).remote
-      upstream.mounted = await remote.$mount(session.default)
-      upstream.remember(session.default)
+      // The composer's catalogs speak three namespaces: session (history and
+      // file references), commands (the `/` catalog), and session references
+      // (the `@` session rows). Mount all three so a federated call can name
+      // any of their descriptors.
+      for (const contribution of [session, commands, sessionReference]) {
+        upstream.mounted.push(await remote.$mount(contribution.default))
+        upstream.remember(contribution.default)
+      }
       // interactions=none 时没有事件通道；轮询 diff 负责状态变化（见 index.ts）
       const handle = (root as unknown as { connection: { interactions: 'none' | 'answer' } }).connection
       if (handle.interactions === 'answer') {
@@ -290,7 +299,8 @@ export class Upstream {
    * Mount a namespace the first federated call to it needs.
    *
    * Only `workspace` is loadable lazily; every other namespace is either
-   * mounted at connect (`session`) or not federated at all. Concurrent first
+   * mounted at connect (`session`, `commands`, `sessionReferenceResolver`) or
+   * not federated at all. Concurrent first
    * calls share one attempt. A failed attempt is forgotten so the next call
    * can retry: a transient mount failure must not wedge the namespace for the
    * lifetime of the connection.
@@ -487,7 +497,7 @@ export class Upstream {
       this.stopStatus = undefined
       this.stopWorkspaceFollow?.()
       this.stopWorkspaceFollow = undefined
-      await this.mounted?.()
+      for (const dispose of this.mounted) await dispose()
     } finally {
       // Release a compose parked on the Workspace baseline.
       this.settleWorkspaceIds()

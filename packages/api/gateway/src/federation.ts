@@ -109,6 +109,14 @@ const IDENTIFIER_PATHS_BY_ENDPOINT: ReadonlyMap<string, readonly IdentifierPath[
   ['workspace/insertBefore', [['request', 'workspaceId']]],
   ['workspace/insertSessionBefore', [['request', 'workspaceId'], ['request', 'sessionId']]],
   ['workspace/rename', [['request', 'workspaceId']]],
+  // Agent-scoped catalogs and commands — the generated wire names the Agent
+  // directly (`agentId`), not through a `request` wrapper.
+  ['commands/execute', [['agentId']]],
+  ['commands/list', [['agentId']]],
+  ['fileReferences/list', [['agentId']]],
+  ['sessionReferenceResolver/candidates', [['agentId']]],
+  // Skill catalog wraps the Session identity in a request object.
+  ['skills/list', [['request', 'sessionId']]],
 ])
 
 /**
