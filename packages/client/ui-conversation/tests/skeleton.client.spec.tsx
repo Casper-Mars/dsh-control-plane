@@ -1120,7 +1120,7 @@ describe('federated Session workspace chrome', () => {
     expect(b.retargetWorkspace).not.toHaveBeenCalled()
   })
 
-  it('degrades safely when a federated row carries no cwd hint', () => {
+  it('keeps the composer live when a federated row carries no cwd hint', () => {
     const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
       sessionId: FED,
       selectedCwd: null,
@@ -1131,11 +1131,104 @@ describe('federated Session workspace chrome', () => {
     // remote Session to the wrong owner.
     expect(b.slotCalls).not.toContain('conversation.hero.workspace')
     expect(b.view.queryByRole('button', { name: /选择工作区|workspace/ })).toBeNull()
+    // The owner fixed the remote Workspace; a missing local hint must not lock
+    // the composer. The first prompt still has somewhere to go.
+    expect(b.view.container.querySelector('[contenteditable="true"]')).not.toBeNull()
     const box = b.view.getByRole('textbox')
-    expect(box.getAttribute('aria-disabled')).toBe('true')
-    expect(box.getAttribute('contenteditable')).not.toBe('true')
+    expect(box.getAttribute('aria-disabled')).not.toBe('true')
+    expect(box.getAttribute('contenteditable')).toBe('true')
     expect(box.getAttribute('aria-haspopup')).toBeNull()
-    expect(box.getAttribute('data-placeholder')).toBe(zh['empty.controlPlane.description'])
+    expect(box.getAttribute('data-placeholder')).toBe(zh['placeholder.hero'])
+    // The live surface still routes the first prompt to the federated Session.
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(b.sink).toHaveBeenCalledWith('ordinary draft', [], 'queue', expect.any(AbortSignal), expect.any(Function))
+  })
+
+  it('keeps a local blank session inert until it has a Workspace', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      summaryBlank: true,
+      selectedCwd: null,
+    })
+    const box = b.view.getByRole('textbox')
+    // The no-workspace surface stays the resident Workspace trigger: no editor
+    // is bound, so no prompt can be typed until a Workspace is picked.
+    expect(box.getAttribute('contenteditable')).toBe('false')
+    expect(box.getAttribute('aria-haspopup')).toBe('menu')
+    expect(box.getAttribute('data-placeholder')).toBe(zh['placeholder.workspace'])
+    expect(b.view.container.querySelector('[contenteditable="true"]')).toBeNull()
+  })
+
+  it('keeps the local blank Workspace trigger clickable', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      summaryBlank: true,
+      selectedCwd: null,
+    })
+    // The inert surface is not a dead end: the whole capsule is still the
+    // picker trigger (this is the branch the federated special case used to
+    // share, so a federated exemption must not take the click handler with it).
+    const card = b.view.container.querySelector('[data-composer-card]')
+    expect(card).not.toBeNull()
+    fireEvent.click(card as Element)
+    const owner = b.pickerOwner() as { open: boolean }
+    expect(owner.open).toBe(true)
+    expect(b.slotCalls).toContain('conversation.hero.workspace')
+  })
+
+  it('names the federated key on the live surface and never opens a picker', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      sessionId: FED,
+      selectedCwd: null,
+      listedSelectedRow: false,
+      controlPlane: true,
+    })
+    // The live composer belongs to the federated Session, not a local one.
+    expect(b.view.container.querySelector('[data-conversation-content]')?.getAttribute('data-conversation-session')).toBe(FED)
+    // A federated surface has no local picker tree at all: clicking the capsule
+    // cannot request a Workspace, so no slot and no menu may appear.
+    const card = b.view.container.querySelector('[data-composer-card]')
+    expect(card).not.toBeNull()
+    fireEvent.click(card as Element)
+    expect(b.view.queryByRole('menu')).toBeNull()
+    expect(b.slotCalls).not.toContain('conversation.hero.workspace')
+    expect(b.retargetWorkspace).not.toHaveBeenCalled()
+  })
+
+  it('keeps a federated live Session (non-hero) live without a cwd hint', () => {
+    const b = mount(sessionSnapshotOf({ blank: false }), [], undefined, {
+      sessionId: FED,
+      selectedCwd: null,
+      listedSelectedRow: false,
+      controlPlane: true,
+    })
+    // Hero is not the only federated surface: a remote Session with history
+    // keeps the docked composer and still offers no local Workspace chrome.
+    expect(b.view.container.querySelector('[data-phase]')?.getAttribute('data-phase')).toBe('active')
+    expect(b.slotCalls).not.toContain('conversation.hero.workspace')
+    const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('aria-disabled')).not.toBe('true')
+    expect(box.getAttribute('contenteditable')).toBe('true')
+    expect(box.getAttribute('data-placeholder')).not.toBe(zh['placeholder.workspace'])
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(b.sink).toHaveBeenCalledWith('ordinary draft', [], 'queue', expect.any(AbortSignal), expect.any(Function))
+  })
+
+  it('lets a raised composer block outrank the removed federated inert posture', () => {
+    const b = mount(sessionSnapshotOf({ blank: true }), [], undefined, {
+      sessionId: FED,
+      selectedCwd: null,
+      listedSelectedRow: false,
+      controlPlane: true,
+      composerBlock: { reason: 'select a model first' },
+    })
+    const box = b.view.getByRole('textbox')
+    // Without a local Workspace prerequisite the blocker's own reason is what
+    // the user sees, and the model seat stays live to clear it.
+    expect(box.getAttribute('aria-disabled')).toBe('true')
+    expect(box.getAttribute('data-placeholder')).toBe('select a model first')
+    fireEvent.keyDown(box, { key: 'Enter' })
+    expect(b.sink).not.toHaveBeenCalled()
+    const seat = (key: string) => b.seatOwners.filter(call => call.key === key).at(-1)?.owner
+    expect(seat('conversation.input.model')).toEqual({ locked: false })
   })
 
   it('still asks for a Workspace when a local blank lost its Workspace', () => {

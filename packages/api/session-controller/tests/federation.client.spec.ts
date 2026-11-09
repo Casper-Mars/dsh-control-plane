@@ -138,6 +138,29 @@ describe('federated Session targets', () => {
     expect(b.svc.retainInfo(FEDERATED).getSnapshot().retainedBy).toEqual({ mainView: 2 })
   })
 
+  it('keeps the hint when another source opens the same key without one', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    const main = b.svc.retain(FEDERATED, { source: 'mainView', cwd: '/remote/a' })
+    onTestFinished(() => { main.release() })
+    await main.ready
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBe('/remote/a')
+
+    // The Sidebar's own view, a controller operation, and every other consumer
+    // open the same key without Workspace authority. Their opens must not erase
+    // the main view's path (a blank federated composer would lock without it).
+    const sidebar = b.svc.retain(FEDERATED, { source: 'gateway' })
+    onTestFinished(() => { sidebar.release() })
+    await sidebar.ready
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBe('/remote/a')
+
+    // The source that supplied it still owns the clear: its next hintless open
+    // drops the stale path rather than letting it survive on the identity row.
+    const reopen = b.svc.retain(FEDERATED, { source: 'mainView' })
+    onTestFinished(() => { reopen.release() })
+    await reopen.ready
+    expect(b.svc.list.getSnapshot().byId[FEDERATED]?.cwd).toBeUndefined()
+  })
+
   it('leaves a local catalog cwd alone whatever hint a caller passes', async ({ mock, start }) => {
     const b = await bench(mock, start)
     b.svc.handleSessionAdded({

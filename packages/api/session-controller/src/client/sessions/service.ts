@@ -267,6 +267,12 @@ export class ClientSessions implements ISessions {
    * is the only `cwd` evidence a remote row can carry.
    */
   private readonly federatedCwdHints = new Map<SessionId, string>()
+  /**
+   * The source that last supplied each federated hint. Only that source may
+   * clear it: another consumer's open (a Sidebar view, a controller operation)
+   * carries no Workspace authority and must not erase the main view's path.
+   */
+  private readonly federatedCwdHintOwners = new Map<SessionId, SessionReferenceSource>()
   /** Stable per-id sources retained for the Client root lifetime, including across generation replacement. */
   private readonly retainObservers = new Map<SessionId, RetentionObserver>()
   private readonly scopeDrops = new Set<Promise<void>>()
@@ -291,6 +297,7 @@ export class ClientSessions implements ISessions {
       const scopes = [...this.scopes]
       this.scopes.clear()
       this.federatedCwdHints.clear()
+      this.federatedCwdHintOwners.clear()
       for (const [, record] of scopes) {
         record.live = false
         record.session.unbindScope()
@@ -316,18 +323,22 @@ export class ClientSessions implements ISessions {
       ? options.cwd
       : undefined
     // Every open restates the authoritative path for that pass: a fresh hint
-    // overwrites the previous one, and an open without a hint clears it rather
-    // than letting a stale path survive on the identity row. No release-time
-    // cleanup is needed — the next retain either overwrites or clears. Local
-    // ids own their catalog `cwd` and never touch this map.
+    // overwrites the previous one, and the source that supplied it may clear it
+    // by opening without a hint. Other sources (the Sidebar's independent view,
+    // a controller operation) carry no Workspace authority: their opens must
+    // not erase the main view's path. No release-time cleanup is needed — the
+    // next retain from the owning source either overwrites or clears. Local ids
+    // own their catalog `cwd` and never touch these maps.
     let hintChanged = false
     if (cwdHint !== undefined) {
       if (this.federatedCwdHints.get(id) !== cwdHint) {
         this.federatedCwdHints.set(id, cwdHint)
         hintChanged = true
       }
-    } else if (federated) {
+      this.federatedCwdHintOwners.set(id, source)
+    } else if (federated && this.federatedCwdHintOwners.get(id) === source) {
       hintChanged = this.federatedCwdHints.delete(id)
+      this.federatedCwdHintOwners.delete(id)
     }
     const reference = this.retainScope(id, source)
     // retainScope only republishes when the row did not exist yet; a reopened

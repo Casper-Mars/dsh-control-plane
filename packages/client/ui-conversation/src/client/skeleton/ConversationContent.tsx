@@ -153,8 +153,9 @@ function ConversationSurface(props: ConversationContentProps) {
   // A federated Session is bound to its owning instance: this Client can never
   // switch its Workspace, and even a disabled chip would still be announced as
   // "Choose workspace". Render no chip and mount no workspace slot at all; the
-  // row keeps its other seats (agent preset, plugin options). `chipTitle` above
-  // still decides the composer's inert posture and the empty-state copy.
+  // row keeps its other seats (agent preset, plugin options). The composer
+  // never waits for a local Workspace here: the owner already fixed one, so
+  // `chipTitle` only affects the local empty-state copy.
   const heroWorkspaceRow = (
     <div className={css.heroWorkspaceRow}>
       {federated ? null : (
@@ -191,7 +192,11 @@ function ConversationSurface(props: ConversationContentProps) {
   // blank session whose workspace vanished (deleted from the sidebar). The
   // bar is ONE session-maybe slot rendered unconditionally — inert is a prop,
   // not a different tree, so the textarea DOM survives the transition.
-  const inert = sessionId === undefined || (hero && chipTitle === undefined)
+  // A federated Session's Workspace is fixed on its owning instance, so a
+  // missing local cwd hint (its identity row may carry none) must never lock
+  // the composer. Only a local blank awaiting a Workspace choice is inert.
+  const inert = sessionId === undefined
+    || (!federated && hero && chipTitle === undefined)
   // A raised block is the same inert posture with the blocker's own reason:
   // one disabled textarea, never a second tree. The no-workspace state wins
   // when both hold — picking a workspace is the earlier prerequisite.
@@ -201,15 +206,9 @@ function ConversationSurface(props: ConversationContentProps) {
     ...(inert
       ? {
         disabled: true,
-        // A federated row has no local picker to open; its notice names the
-        // recovery action (choose the Session from the instance in the sidebar).
-        placeholder: federated ? t('empty.controlPlane.description') : t('placeholder.workspace'),
-        ...(federated
-          ? {}
-          : {
-            workspacePickerOpen: pickerOpen,
-            onRequestWorkspace: () => { setPickerOpen(true) },
-          }),
+        placeholder: t('placeholder.workspace'),
+        workspacePickerOpen: pickerOpen,
+        onRequestWorkspace: () => { setPickerOpen(true) },
       }
       : blocked
         // `blocked`, not `disabled`: the bar refuses input either way, but a

@@ -276,7 +276,7 @@ describe('workspace create entry', () => {
     const { container } = renderTree({
       groups: [groupView({ workspaces: placeholder })],
       createSession: vi.fn(async () => 'new-1'),
-      refreshTree: async () => placeholder,
+      refreshTree: async () => [groupView({ workspaces: placeholder })],
       openSession: vi.fn(),
     })
     await settle()
