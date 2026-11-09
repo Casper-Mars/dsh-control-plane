@@ -294,9 +294,6 @@ importers:
       '@deepseek-ai/cordis-plugin-timer':
         specifier: workspace:~
         version: link:../../vendor/timer
-      '@deepseek-ai/dsh-acp-app':
-        specifier: workspace:*
-        version: link:../../packages/bundle/acp-app
       '@deepseek-ai/dsh-agent-instructions':
         specifier: workspace:*
         version: link:../../packages/context/agent-instructions
@@ -390,9 +387,6 @@ importers:
       '@deepseek-ai/dsh-goal-round-driver':
         specifier: workspace:*
         version: link:../../packages/goal/goal-round-driver
-      '@deepseek-ai/dsh-headless':
-        specifier: workspace:*
-        version: link:../../packages/bundle/headless
       '@deepseek-ai/dsh-hmr':
         specifier: workspace:*
         version: link:../../packages/boot/hmr
@@ -438,12 +432,6 @@ importers:
       '@deepseek-ai/dsh-schedule':
         specifier: workspace:*
         version: link:../../packages/schedule/schedule
-      '@deepseek-ai/dsh-sdk-app':
-        specifier: workspace:*
-        version: link:../../packages/bundle/sdk-app
-      '@deepseek-ai/dsh-sdk-minimal':
-        specifier: workspace:*
-        version: link:../../packages/bundle/sdk-minimal
       '@deepseek-ai/dsh-session-projection':
         specifier: workspace:*
         version: link:../../packages/session/session-projection

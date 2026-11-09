@@ -364,36 +364,6 @@ describe('loadProfile', () => {
       .toEqual([...PROFILE_TEMPLATES.web?.bundles ?? []])
   })
 
-  it('normalizes only the exact installation-owned headless bundle tuple', () => {
-    const anchor = stageInstallation({
-      '@deepseek-ai/dsh-base': { patch: '[]\n' },
-      'dsh-control-plane-app': { patch: '[]\n' },
-      '@deepseek-ai/dsh-headless': { patch: '[]\n' },
-      'custom-bundle': { patch: '[]\n' },
-    })
-    const home = tmp()
-    const stock = resolveProfileDir('headless', home)
-    initProfile(stock, [
-      '@deepseek-ai/dsh-base', 'dsh-control-plane-app', '@deepseek-ai/dsh-headless',
-    ])
-    const retiredManifest = readProfileManifest('t', stock)
-    writeProfileManifest(stock, retiredManifest)
-    loadProfile('t', 'headless', anchor, home)
-    expect(readProfileManifest('t', stock).dsh?.profile).toEqual({
-      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
-    })
-
-    const customHome = tmp()
-    const custom = resolveProfileDir('headless', customHome)
-    initProfile(custom, [
-      '@deepseek-ai/dsh-base', 'dsh-control-plane-app', '@deepseek-ai/dsh-headless', 'custom-bundle',
-    ])
-    loadProfile('t', 'headless', anchor, customHome)
-    expect(readProfileManifest('t', custom).dsh?.profile?.bundles).toEqual([
-      '@deepseek-ai/dsh-base', 'dsh-control-plane-app', '@deepseek-ai/dsh-headless', 'custom-bundle',
-    ])
-  })
-
   it.each(['@deepseek-ai/dsh-experimental-schedule-bundle', '@deepseek-ai/dsh-experimental-agent-team-profile'])('removes retired %s and keeps the rest of an application-owned manifest', (retired) => {
     const anchor = stageInstallation({
       '@deepseek-ai/dsh-base': { patch: '[]\n' },

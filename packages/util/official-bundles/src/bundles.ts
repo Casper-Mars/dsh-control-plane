@@ -8,20 +8,8 @@ export interface ProfileTemplate {
 
 /** The shipped profile templates auto-initialized on first use, by name. */
 export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
-  acp: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
-  },
   web: {
     bundles: ['@deepseek-ai/dsh-base', 'dsh-control-plane-app'],
-  },
-  headless: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
-  },
-  sdk: {
-    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
-  },
-  'sdk-minimal': {
-    bundles: ['@deepseek-ai/dsh-sdk-minimal'],
   },
 }
 
@@ -29,9 +17,7 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
  * Installation-owned bundle tuples that an earlier release wrote into a shipped profile; app-boot replaces an exact
  * match with the {@link PROFILE_TEMPLATES} entry of the same name and leaves every other list untouched.
  */
-export const INSTALLATION_OWNED_PROFILE_TUPLES: Readonly<Record<string, readonly string[]>> = {
-  headless: ['@deepseek-ai/dsh-base', 'dsh-control-plane-app', '@deepseek-ai/dsh-headless'],
-}
+export const INSTALLATION_OWNED_PROFILE_TUPLES: Readonly<Record<string, readonly string[]>> = {}
 
 /** Bundles an earlier release shipped and the installation no longer carries; app-boot removes them from profiles. */
 export const RETIRED_BUNDLES: ReadonlySet<string> = new Set([
@@ -39,6 +25,11 @@ export const RETIRED_BUNDLES: ReadonlySet<string> = new Set([
   // ([upgrade guide](../../../../docs/upgrade-guide/v0.2.0-rc.2/schedule-bundle-retired/guide.md)).
   '@deepseek-ai/dsh-experimental-schedule-bundle',
   '@deepseek-ai/dsh-experimental-agent-team-profile',
+  // The control-plane product ships only the Web surface.
+  '@deepseek-ai/dsh-acp-app',
+  '@deepseek-ai/dsh-headless',
+  '@deepseek-ai/dsh-sdk-app',
+  '@deepseek-ai/dsh-sdk-minimal',
 ])
 
 /** The bundle list a `dsh plugin` init uses for a name with no shipped template. */
