@@ -1,96 +1,83 @@
-# DeepSeek Harness
+# dsh-control-plane
 
 [English](README.md) | 中文
 
-DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。
+一个 Web 控制面：**在一个界面里管理多个 DeepSeek Harness（`dsh`）实例**。左侧是 `实例 → 工作区 → 会话` 三级树，右侧复用官方 dsh 对话界面。
 
-它构建于**一切皆插件**的架构之上，由 [Cordis](https://github.com/cordiverse/cordis) 驱动，其设计参见论文 [_A Programming Paradigm for Spatiotemporal Composability_](https://arxiv.org/abs/2608.25512)。
+<a id="what-it-is"></a>
 
-文档：[https://deepseek-harness.github.io/deepseek-harness/](https://deepseek-harness.github.io/deepseek-harness/)
+## 它是什么
 
-## 开发者预览
+- 一条浏览器连接、多个 dsh 宿主：带实例前缀的会话键（`<instanceId>:<sessionId>`）由网关转发到归属实例。
+- 统一的三级树、实例在线状态、重连，以及每个实例各自的失败原因。
+- 边界：只做接入、路由、呈现、审计。任务编排、重试、验收属于交付层，不在这里。
 
-DeepSeek Harness 处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
+<a id="status"></a>
 
-运行本项目前，请阅读[安全说明](SAFETY.zh.md)。
+## 状态
 
-<a id="run"></a>
+开发者预览，基于 `dsh` 0.2.2-rc.1。仓库目前仍带着完整的 dsh 源码，因为两个 runtime 扩展点是就地修改的；目标形态是 `dsh-web-control-plane-app` bundle 加插件，完成之后仓库会收缩到只剩控制面本身。
 
-## 运行
+已实现：host 插件（实例树、每实例出站连接、事件流、重连）、网关联邦路由、客户端联邦会话键、侧边栏实例树、会话行右键菜单，以及从工作区行新建会话。
 
-### 通过 `npm` 运行
+<a id="architecture"></a>
 
-安装 `Node.js`，然后运行：
+## 架构
 
-```sh
-npx @deepseek-ai/dsh web
+```text
+Browser ── /api ──> Gateway ── local ─────────────> this host
+                        └───── federated key ────> instance A / B / C
 ```
 
-该命令默认会在 `http://127.0.0.1:3080` 启动 Web UI，本机启动时还会用默认浏览器打开页面。通过 SSH 启动时只打印宿主机 URL，因为本地转发地址由 SSH 客户端或编辑器持有。传入 `--no-open` 可仅运行服务器而不打开浏览器。详见 [Web UI 指南](docs/user/guide/index.zh.md)。
+- `packages/control/control-plane` —— host 插件：每个实例一条出站连接、组树、事件扇出。
+- `packages/api/gateway/src/federation.ts` —— 网关联邦路由，处理带实例前缀的调用。
+- `packages/api/session-controller/src/client/federation.ts` —— 客户端联邦身份与 `cwd` hint。
+- `packages/client/ui-sidebar/src/client/InstanceGroups.tsx` —— 侧边栏实例树。
+- `packages/client/ui-conversation` —— 控制面空态与 foreign 会话处理。
 
-<a id="run-from-source"></a>
+<a id="quick-start"></a>
 
-### 从源码运行
+## 快速开始
 
-如需从仓库源码运行：
+开发说明和 demo 脚本见 `packages/control/control-plane/README.md`。
 
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
-pnpm install
-pnpm run build
-pnpm dsh web
+```yaml
+- id: control-plane
+  name: '@deepseek-ai/dsh-control-plane'
+  config:
+    instances:
+      - { id: cto, name: CTO Agent, host: 127.0.0.1, port: 8090 }
+      - { id: dev, name: Dev Agent, host: 127.0.0.1, port: 8091 }
 ```
 
-`pnpm run build` 会准备仓库产物。`pnpm dsh web` 会直接使用这些已构建产物，不会重新构建。
+<a id="repository-layout"></a>
 
-## 社区与支持
+## 仓库结构
 
-- 通过 [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions) 提交反馈或 bug 报告。
-- 为你的插件仓库添加 [`dsh-plugin`](https://github.com/topics/dsh-plugin) 话题，便于被发现。
-- 欢迎加入 DeepSeek Harness 企微群！扫描下方二维码填写入群问卷，小助手会定期发送入群邀请。
-
-<table>
-  <thead>
-    <tr>
-      <th align="center">入群问卷</th>
-      <th align="center">微信公众号</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td align="center"><a href="https://trtgsjkv6r.feishu.cn/share/base/form/shrcnIt5twSVdLGD52KJBckGCgg"><img src="https://cdn.deepseek.com/harness/readme/community-wecom-survey.png" alt="DeepSeek Harness 入群问卷二维码" width="180" height="180"></a></td>
-      <td align="center"><img src="https://cdn.deepseek.com/harness/readme/community-wechat-official-account.png" alt="DeepSeek Harness 团队微信公众号二维码" width="180" height="180"></td>
-    </tr>
-  </tbody>
-</table>
-
-## 参与贡献
-
-参见 [CONTRIBUTING.md](CONTRIBUTING.zh.md)。
-
-## 开发
-
-请先阅读[开发指南](docs/development.zh.md)与[架构文档](docs/architecture.zh.md)。
-
-`pnpm run dev:web` 会在一个终端里完成构建、启动，并在源码修改时重建 client bundle；`make help` 列出 Web 与 Desktop 对应的 Make target。完整表格见开发指南的「应用命令」一节。
-
-面向 agent：请遵循 [AGENTS.md](AGENTS.md)。
-
-## 引用
-
-```bibtex
-@misc{deepseek-harness2026,
-  title={DeepSeek Harness: Everything is a Plugin},
-  author={DeepSeek-AI},
-  year={2026},
-  publisher={GitHub},
-  howpublished={\url{https://github.com/deepseek-ai/deepseek-harness}},
-}
+```text
+packages/control/control-plane/   control-plane host plugin
+packages/api/gateway/             gateway and federation routing
+packages/api/session-controller/  session model and federated client keys
+packages/client/ui-sidebar/       instance tree
+packages/client/ui-conversation/  conversation shell
 ```
 
-## 许可证
+<a id="documentation"></a>
 
-[MIT](LICENSE)
+## 文档
 
-第三方依赖及其许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- 控制面 host 说明：`packages/control/control-plane/README.md`
+- 设计计划：[飞书文档](https://www.feishu.cn/docx/NPIcdwT75ogYwexOYYtcp1Xfnkg)
+- 上游 harness：[deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
+
+<a id="upstream"></a>
+
+## 上游
+
+本仓库派生自 `deepseek-ai/deepseek-harness`（MIT）。`upstream` remote 指向官方仓库；当前历史从控制面工作开始，而不是完整的上游历史。
+
+<a id="license"></a>
+
+## License
+
+MIT

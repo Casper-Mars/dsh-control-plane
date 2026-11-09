@@ -2,33 +2,30 @@
 # section, a hash of its English and Chinese blocks outside code blocks and generated regions.
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write README.md
-/deepseek-harness:
-  en: f68c4f080ce55ff2
-  zh: 88a76d7f7f0b260e
-/deepseek-harness/developer-preview:
-  en: 4ef4d8a71ac143f0
-  zh: 1bfc3149ba8e5543
-/deepseek-harness/run:
-  en: 4e0248e4c6474fc6
-  zh: eb2fb8d78c7d6bc0
-/deepseek-harness/run/run-from-npm:
-  en: e22005cd42e6cbad
-  zh: 0f536f4208df1d60
-/deepseek-harness/run/run-from-source:
-  en: 819e3f7c144d0d64
-  zh: de815f040975dba7
-/deepseek-harness/community-and-support:
-  en: 20acf6451fdc869b
-  zh: d06246dd019ecef7
-/deepseek-harness/contributing:
-  en: cabc2d3e9f8898bd
-  zh: 83b6d238bae29ce3
-/deepseek-harness/development:
-  en: 803ca2b11b497bed
-  zh: 8b4071eb0e7783ef
-/deepseek-harness/citation:
-  en: 6704e9e5a8d49a91
-  zh: 85c9cdd8d56f8e9d
-/deepseek-harness/license:
-  en: 926995344fc1c72b
-  zh: c92fab5abf85932f
+/dsh-control-plane:
+  en: 37b0e3428eeb2907
+  zh: 553647555a231bae
+/dsh-control-plane/what-it-is:
+  en: 2ae4077981194928
+  zh: 6e556f6699075a28
+/dsh-control-plane/status:
+  en: 628cf74315ed4a7e
+  zh: d6780a7abb5d643c
+/dsh-control-plane/architecture:
+  en: 8160ac712f07a1c8
+  zh: df0e2e3ec7ffd05f
+/dsh-control-plane/quick-start:
+  en: 92fcb4722e433f60
+  zh: 02a0066ac1350ebd
+/dsh-control-plane/repository-layout:
+  en: e0b878e218330b9f
+  zh: f7fe59ec1361d465
+/dsh-control-plane/documentation:
+  en: a520ef42e2fd461c
+  zh: a85baf753324ac35
+/dsh-control-plane/upstream:
+  en: 703c6ff274593e7d
+  zh: ccd29928ea867056
+/dsh-control-plane/license:
+  en: aad9b93c8b488fac
+  zh: aad9b93c8b488fac
