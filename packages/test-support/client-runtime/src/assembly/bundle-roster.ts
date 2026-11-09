@@ -27,7 +27,7 @@ import { ClientRoster, type ClientRosterRow } from './roster.ts'
  * The `web` profile's bundle layers, in the order `dsh --profile web` applies them
  * (`PROFILE_TEMPLATES.web` in `@deepseek-ai/dsh-official-bundles`).
  */
-export const WEB_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
+export const WEB_PROFILE_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base', 'dsh-control-plane-app']
 
 interface PackageManifest {
   name?: unknown

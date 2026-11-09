@@ -30,7 +30,7 @@ interface RuntimePlatform {
 
 type RuntimePlatformManifest = Record<string, RuntimePlatform>
 
-const AGENT_PRESET_GLOB = 'packages/bundle/web-app/presets/*.patch.yml'
+const AGENT_PRESET_GLOB = 'packages/bundle/control-plane-app/presets/*.patch.yml'
 
 export interface RuntimeClosureResult {
   failures: string[]

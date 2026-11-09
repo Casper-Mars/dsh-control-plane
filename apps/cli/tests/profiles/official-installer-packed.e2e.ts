@@ -107,7 +107,7 @@ it.skipIf(!built)('installs the exported registry\'s local closure and switches 
   onTestFinished(() => registry.close())
 
   await writeFile(join(profile, 'package.json'), JSON.stringify({ name: 'packed-official-profile', private: true, dependencies: {},
-    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-control-plane-app'] } },
   }))
   // Only the settings a real profile gets. No override, ignore list, or scoped .npmrc may route a package around the
   // registry, so every dependency of the packed bundles is answered by this run or by its fixed upstream redirect.

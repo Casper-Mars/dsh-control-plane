@@ -23,7 +23,7 @@ export const PROTECTED_PLUGINS: ReadonlySet<string> = new Set([
  */
 export const HIDDEN_BUNDLES: ReadonlySet<string> = new Set([
   '@deepseek-ai/dsh-base',
-  '@deepseek-ai/dsh-web-app',
+  'dsh-control-plane-app',
   '@deepseek-ai/dsh-headless',
   '@deepseek-ai/dsh-sdk-app',
   '@deepseek-ai/dsh-acp-app',

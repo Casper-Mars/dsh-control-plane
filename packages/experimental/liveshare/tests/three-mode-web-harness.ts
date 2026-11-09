@@ -397,7 +397,7 @@ export async function bootWebOwner(options: WebOwnerOptions = {}): Promise<WebOw
     private: true,
     dependencies: Object.fromEntries(extraBundles.map(bundle => [bundle, 'workspace:^'])),
     dsh: {
-      profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...extraBundles] },
+      profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-control-plane-app', ...extraBundles] },
     },
   }, undefined, 2) + '\n')
   if (options.existingCwd === undefined) await writeFile(join(profileDir, 'cordis.patch.yml'), [

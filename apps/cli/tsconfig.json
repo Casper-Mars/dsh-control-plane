@@ -33,7 +33,7 @@
       "path": "../../packages/bundle/headless"
     },
     {
-      "path": "../../packages/bundle/web-app"
+      "path": "../../packages/bundle/control-plane-app"
     },
     {
       "path": "../../packages/host/webserver"

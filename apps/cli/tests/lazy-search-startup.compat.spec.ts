@@ -4,7 +4,7 @@
  * Only the dedicated Node compatibility gate opts this test in after building
  * both artifacts; ordinary Vitest inventory deterministically skips it.
  * The child runs built artifacts under plain Node with the real shipped
- * web profile (dsh-base + dsh-web-app bundle patches, auto-initialized).
+ * web profile (dsh-base + dsh-control-plane-app bundle patches, auto-initialized).
  * Its URL line follows the settled profile boot; SIGTERM then exercises the
  * shipped quiescent disposer.
  */
@@ -24,7 +24,7 @@ const webDist = join(repoRoot, 'apps/web/dist/index.html')
 // Full-text session search ships off (`openAt: never` on both layers): the
 // base patch carries the default, and the web restatement must not re-enable it.
 const baseConfigPath = join(repoRoot, 'packages/bundle/base/cordis.patch.yml')
-const webConfigPath = join(repoRoot, 'packages/bundle/web-app/cordis.patch.yml')
+const webConfigPath = join(repoRoot, 'packages/bundle/control-plane-app/cordis.patch.yml')
 const requireBuiltArtifacts = process.env.DSH_REQUIRE_BUILT_CLI_SMOKE === '1'
 
 interface ConfigRow {

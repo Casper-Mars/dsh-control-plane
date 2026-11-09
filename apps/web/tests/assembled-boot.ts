@@ -58,7 +58,7 @@ interface BootComposition {
 }
 
 const REPO_ROOT = process.cwd()
-const BUNDLE_LAYERS = ['packages/bundle/base', 'packages/bundle/web-app'].map(dir => ({
+const BUNDLE_LAYERS = ['packages/bundle/base', 'packages/bundle/control-plane-app'].map(dir => ({
   dir: join(REPO_ROOT, dir),
   manifest: join(REPO_ROOT, dir, 'package.json'),
 }))

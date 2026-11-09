@@ -48,7 +48,7 @@ describe('desktop external plugin profile', () => {
     await manager.applyRelease()
     seedPlugin(manager)
     const profile = manager.paths.profile
-    const name = '@deepseek-ai/dsh-web-app'
+    const name = 'dsh-control-plane-app'
     const path = join(profile, 'node_modules', name)
     mkdirSync(path, { recursive: true })
     writeFileSync(join(path, 'package.json'), JSON.stringify({ name, version: '1.0.0' }))
@@ -121,7 +121,7 @@ describe('desktop external plugin profile', () => {
     }
     expect(manifest.dependencies.plugin).toBe('1.0.0')
     expect(manifest.dsh.profile.bundles).not.toContain('plugin')
-    expect(manifest.dsh.profile.bundles).toContain('@deepseek-ai/dsh-web-app')
+    expect(manifest.dsh.profile.bundles).toContain('dsh-control-plane-app')
     await manager.applyRelease()
     expect(readFileSync(patch, 'utf8')).toContain('[]')
   })

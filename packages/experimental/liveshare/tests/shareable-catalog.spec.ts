@@ -155,7 +155,7 @@ describe('shareableViewerCatalog', () => {
   it('omits components mounted by a core profile bundle', () => {
     expect(shareableViewerCatalog(registry('webRuntime/info'), () => ({
       package: '@fixture/core',
-      bundle: '@deepseek-ai/dsh-web-app',
+      bundle: 'dsh-control-plane-app',
       core: true,
     }))).toEqual([])
   })

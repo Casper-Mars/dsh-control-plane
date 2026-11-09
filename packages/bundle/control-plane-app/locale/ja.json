@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Control Plane",
+    "description": "フロントエンドのページリソースを提供し、Web アプリに必要な実行設定を接続します。"
+  }
+}

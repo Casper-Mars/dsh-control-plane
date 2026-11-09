@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { FederationForwarder, FederationRouter, FederationTarget } from '@deepseek-ai/dsh-api-gateway'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
-import { resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
+import { loadConfig, resolveInstances, type Config as RawConfig, type ResolvedInstance } from './config.ts'
 import { InstanceConnections, type InstanceConnection } from './connections.ts'
 import { instanceUnreachable } from './errors.ts'
 import { ControlPlaneEventHub, diffInstanceStates } from './events.ts'
@@ -50,7 +50,8 @@ export const Config: z<RawConfig> = z.object({
     host: z.string().required(),
     port: z.natural().required(),
     token: z.string(),
-  })).required(),
+  })).default([]),
+  configFile: z.string(),
   federation: z.object({
     enabled: z.boolean().default(true),
   }),
@@ -154,8 +155,9 @@ export class ControlPlane extends TypertRemoteService {
 
   constructor(ctx: Context, config: RawConfig) {
     super(ctx, 'controlPlane', { namespace: 'controlPlane' })
-    this.instances = resolveInstances(config)
-    this.federationEnabled = config.federation?.enabled !== false
+    const effective = loadConfig(config)
+    this.instances = resolveInstances(effective)
+    this.federationEnabled = effective.federation?.enabled !== false
     this.connections = new InstanceConnections(this.instances, {
       open: async (instance, transport) => await Upstream.connect(instance, transport),
       attach: (instance, upstream) => {
@@ -182,6 +184,7 @@ export class ControlPlane extends TypertRemoteService {
       })
     }
     console.log('[control-plane] 插件已激活，实例数:', this.instances.length)
+    if (this.instances.length === 0) console.warn('[control-plane] 未配置实例：用 `dsh web --config <file>` 指定实例列表')
     // 调试：确认描述符是否已被 typert-loader 注册
     const typert = ctx.get('typert') as { listPackages?: () => Array<{ package: string; face: string }> } | undefined
     const mine = typert?.listPackages?.().filter(entry => entry.package === '@deepseek-ai/dsh-control-plane') ?? []

@@ -14,7 +14,7 @@ const experimental = '@deepseek-ai/dsh-experimental-prototype'
 const core = '@deepseek-ai/dsh-core'
 const base = '@deepseek-ai/dsh-base'
 const profile = 'packages/util/official-bundles/src/bundles.ts'
-const preset = 'packages/bundle/web-app/presets/standard.patch.yml'
+const preset = 'packages/bundle/control-plane-app/presets/standard.patch.yml'
 const patch = 'packages/bundle/base/cordis.patch.yml'
 
 function manifest(root: string, path: string, fields: Record<string, unknown>): void {
@@ -405,10 +405,10 @@ describe('default product isolation', () => {
 
   it('checks group contents after an id-only patch changes the composed Web tree', () => {
     const root = fixture()
-    const web = '@deepseek-ai/dsh-web-app'
-    write(root, 'packages/bundle/web-app/package.json', { name: web, dsh: { bundle: { patch: './cordis.patch.yml' } } })
+    const web = 'dsh-control-plane-app'
+    write(root, 'packages/bundle/control-plane-app/package.json', { name: web, dsh: { bundle: { patch: './cordis.patch.yml' } } })
     write(root, patch, [{ insert: [{ id: 'feature-group', group: true, config: [{ name: core }] }] }])
-    write(root, 'packages/bundle/web-app/cordis.patch.yml', [
+    write(root, 'packages/bundle/control-plane-app/cordis.patch.yml', [
       { id: 'feature-group', config: [{ name: experimental }] },
     ])
     write(root, profile, `export const PROFILE_TEMPLATES = { web: { bundles: ['${base}', '${web}'] } }\n`

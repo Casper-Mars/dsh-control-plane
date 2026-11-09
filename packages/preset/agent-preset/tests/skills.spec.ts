@@ -18,7 +18,7 @@ const skills = fileURLToPath(new URL('../skills/', import.meta.url))
 const names = readdirSync(skills)
 
 /**
- * `packages/bundle/web-app/presets/standard.patch.yml` prunes a tool result only above `thresholdChars: 8192`
+ * `packages/bundle/control-plane-app/presets/standard.patch.yml` prunes a tool result only above `thresholdChars: 8192`
  * code points; a skill result below it reaches the model intact.
  */
 const PRUNER_THRESHOLD_CHARS = 8192

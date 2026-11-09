@@ -220,7 +220,7 @@ describe.skipIf(!built)('Web process failure matrix', () => {
       const result = await app.child
       exit(result, 1)
       expect(result.stderr).toContain('dsh: startup failed: 1 required plugin did not activate')
-      expect(result.stderr).toContain('  web-runtime (required)\n    Package: @deepseek-ai/dsh-web-app')
+      expect(result.stderr).toContain('  web-runtime (required)\n    Package: dsh-control-plane-app')
       expect(result.stderr).toContain(`bind address "${host}" carries an interface zone id`)
       expect(result.stderr).toContain('pass --public-url')
       expect(result.stdout).not.toContain('dsh web: http')

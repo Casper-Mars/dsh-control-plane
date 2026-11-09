@@ -8,6 +8,9 @@
  * @module @deepseek-ai/dsh-control-plane/src/config
  */
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 /** One Harness instance the control plane drives. */
 export interface InstanceConfig {
   /** Stable, unique id chosen here — never reported by the instance. */
@@ -51,12 +54,50 @@ export interface FederationConfig {
 export interface Config {
   /** Instances in sidebar order. */
   instances: InstanceConfig[]
+  /**
+   * JSON file supplying the instance list. When set, its `instances` (and
+   * `federation`) replace the inline values; the launcher's `--config` flag
+   * fills this field.
+   */
+  configFile?: string
   /** Federation rollout switch; absent means enabled. */
   federation?: FederationConfig
 }
 
 /** Id shape accepted from configuration: lowercase words joined by `-` or `_`. */
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
+
+/**
+ * Resolve the configured instance source into one effective configuration.
+ *
+ * The inline row config stays a valid (possibly empty) composition; a
+ * `configFile` lets a deployment keep the instance list outside the profile
+ * patch. File errors name the resolved path so a typo is actionable.
+ * @param config - row configuration, possibly naming a JSON file.
+ * @returns the effective configuration, with `configFile` cleared.
+ * @throws when the file cannot be read, is not JSON, or carries no instance array.
+ */
+export function loadConfig(config: Config): Config {
+  if (config.configFile === undefined || config.configFile === '') return config
+  const path = resolve(config.configFile)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`control-plane: 无法读取配置文件 ${path}: ${reason}`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as { instances?: unknown }).instances)) {
+    throw new Error(`control-plane: 配置文件 ${path} 必须是包含 instances 数组的 JSON 对象`)
+  }
+  const file = parsed as Config
+  const { configFile: _consumed, ...inline } = config
+  return {
+    ...inline,
+    instances: file.instances,
+    ...(file.federation === undefined ? {} : { federation: file.federation }),
+  }
+}
 
 /**
  * Validate configuration and derive the routing facts.
@@ -66,8 +107,6 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
  */
 export function resolveInstances(config: Config): ResolvedInstance[] {
   const raw = config.instances
-  if (raw.length === 0) throw new Error('control-plane: 至少需要一个实例（instances 为空）')
-
   const seen = new Set<string>()
   return raw.map((instance, index) => {
     const where = `instances[${index}]`

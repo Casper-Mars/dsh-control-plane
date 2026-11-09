@@ -142,7 +142,7 @@ function validatePresetPlaneSeparation(): string[] {
   // The shipped Web surface is two bundle layers over an empty root; the web
   // layer is its host patch followed by one patch file per shipped preset.
   const hostFile = 'packages/bundle/base/cordis.patch.yml'
-  const overlayDir = 'packages/bundle/web-app'
+  const overlayDir = 'packages/bundle/control-plane-app'
   const overlayManifest = JSON.parse(readFileSync(resolve(root, overlayDir, 'package.json'), 'utf8')) as { dsh: { bundle: DshBundleManifest } }
   const overlayFiles = bundlePatchFiles(overlayManifest.dsh.bundle).map(file => `${overlayDir}/${file.replace(/^\.\//, '')}`)
   const disabled = new Set<string>()

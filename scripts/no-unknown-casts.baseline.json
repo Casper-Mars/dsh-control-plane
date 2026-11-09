@@ -346,16 +346,16 @@
   "packages/bundle/headless/tests/startup.spec.ts": {
     "2e78263d16d54ccfd8d322bcdf1bf738bd8134e15c24063ece9a1d1b52f4ebd9": 1
   },
-  "packages/bundle/web-app/tests/browser-open.spec.ts": {
+  "packages/bundle/control-plane-app/tests/browser-open.spec.ts": {
     "2e78263d16d54ccfd8d322bcdf1bf738bd8134e15c24063ece9a1d1b52f4ebd9": 1
   },
-  "packages/bundle/web-app/tests/document-conversion.e2e.ts": {
+  "packages/bundle/control-plane-app/tests/document-conversion.e2e.ts": {
     "743a7488a765c578e607d08ba6bdcf6f2f2971f67b05a42d5097aad2458134a1": 1
   },
-  "packages/bundle/web-app/tests/document-preview.spec.ts": {
+  "packages/bundle/control-plane-app/tests/document-preview.spec.ts": {
     "154da39139a0074bad3d13a624e5fa62d1f7ce19dc8b9c28a73af3263cd7f10e": 1
   },
-  "packages/bundle/web-app/tests/startup.spec.ts": {
+  "packages/bundle/control-plane-app/tests/startup.spec.ts": {
     "2e78263d16d54ccfd8d322bcdf1bf738bd8134e15c24063ece9a1d1b52f4ebd9": 1
   },
   "packages/client/connection/src/rpc-schema.ts": {

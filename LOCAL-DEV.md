@@ -174,14 +174,14 @@ window.__DSH_BOOT__.plugins.map(p => p.id)   // 或 entries
 pnpm dsh --profile web --patch ./trim.patch.yml --no-open --port 3099
 ```
 
-> `id` 取自 `packages/bundle/web-app/cordis.patch.yml` 里的 `dsh.client` 行（名字通常就是插件名去掉 `@deepseek-ai/dsh-client-` 前缀）。改完 patch 只需重启，**不需要重新构建**。
+> `id` 取自 `packages/bundle/control-plane-app/cordis.patch.yml` 里的 `dsh.client` 行（名字通常就是插件名去掉 `@deepseek-ai/dsh-client-` 前缀）。改完 patch 只需重启，**不需要重新构建**。
 
 ### 4.2 正式裁剪：从组合里去掉
 
 两条都要做，否则要么装了不用、要么引用不到：
 
-1. **删依赖**：`packages/bundle/web-app/package.json` 的 `dependencies` 里去掉对应 `@deepseek-ai/dsh-client-ui-*`
-2. **删 roster 行**：`packages/bundle/web-app/cordis.patch.yml` 里删掉对应的 `dsh.client` 行（保留 `disabled: true` 也可，但语义是「装了但关掉」）
+1. **删依赖**：`packages/bundle/control-plane-app/package.json` 的 `dependencies` 里去掉对应 `@deepseek-ai/dsh-client-ui-*`
+2. **删 roster 行**：`packages/bundle/control-plane-app/cordis.patch.yml` 里删掉对应的 `dsh.client` 行（保留 `disabled: true` 也可，但语义是「装了但关掉」）
 3. 重新 `pnpm install`（锁文件会变）→ `pnpm run build`
 
 ### 4.3 用哪个？
@@ -202,7 +202,7 @@ pnpm dsh --profile web --patch ./trim.patch.yml --no-open --port 3099
 | 改了源码界面没变 | 没在 `dev:web` 下开发，或 watcher 掉了；用 `--poll` 重开 |
 | 端口占用 | `--port 0` 或换端口；日志里会打印实际端口和 token |
 | 想彻底重置 | 删掉 `$DSH_HOME/profiles/web` 后重启，会按模板重新生成 |
-| 想回到干净状态 | `git checkout -- packages/bundle/web-app`，再 `pnpm install` |
+| 想回到干净状态 | `git checkout -- packages/bundle/control-plane-app`，再 `pnpm install` |
 | 页面打开 401 | URL 少了 `?token=`，token 在启动日志里 |
 
 ---
