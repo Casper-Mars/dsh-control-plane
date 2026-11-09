@@ -69,7 +69,7 @@ The installer embeds `DSH_DESKTOP_UPDATE_CHANNEL` (`nightly` by default, or `sta
 
 ## Configuration and local builds
 
-Unsigned macOS and Windows packages use the same localized **DSH Local Build** label and version/commit badge as local Web builds. Signed packages keep official branding, including test deployments and macOS builds that skip notarization. Native application and installer names are unchanged.
+Unsigned macOS and Windows packages use the same localized **Control Plane** label and version/commit badge as local Web builds. Signed packages keep official branding, including test deployments and macOS builds that skip notarization. Native application and installer names are unchanged.
 
 Set `DSH_PACKAGING_CONFIG_DIR` to the absolute machine configuration directory and `DSH_PACKAGING_PRESET` to `test` or `production` for local Windows commands. The loader reads `presets/<preset>.env`; signed commands additionally read `secrets/windows-signing.env`. Relative certificate and SignTool paths resolve beside the file declaring them. Public presets reject credentials, and the signing file cannot override public settings. Missing configuration fails without falling back to `.env.windows`; commands without a preset retain the existing dotenv behavior. Unsigned and preparation-only presets never read the signing file. Cache maintenance also reads only public preset settings. Test signed packages also require the existing download origin and release ID, but no upload credentials. Local preset commands with `--build-version auto` number from local artifacts only; Actions uses its run number and attempt.
 

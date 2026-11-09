@@ -36,7 +36,7 @@ export const fr = {
   'subtitle.expand': 'Développer la description de {name}',
   'subtitle.collapse': 'Réduire la description de {name}',
   'back': 'Retour',
-  'brand.localBuild': 'Version locale de DSH',
+  'brand.localBuild': 'Plan de contrôle',
   'workspace.defaultName': 'Espace de travail par défaut',
   'unknown': 'Inconnu',
   'none': 'Aucun',

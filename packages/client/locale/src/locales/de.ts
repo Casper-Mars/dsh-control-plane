@@ -36,7 +36,7 @@ export const de = {
   'subtitle.expand': 'Beschreibung für {name} ausklappen',
   'subtitle.collapse': 'Beschreibung für {name} einklappen',
   'back': 'Zurück',
-  'brand.localBuild': 'Lokaler DSH-Build',
+  'brand.localBuild': 'Control Plane',
   'workspace.defaultName': 'Standardarbeitsbereich',
   'unknown': 'Unbekannt',
   'none': 'Keine',
