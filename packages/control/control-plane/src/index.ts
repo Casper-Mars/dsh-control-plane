@@ -125,6 +125,12 @@ export class ControlPlane extends TypertRemoteService {
   /** Set when a change arrived during a running state pass; the pass repeats. */
   private statePassQueued = false
 
+  /** Set when the Workspace mapping moved and its tree frame must be forced out. */
+  private treePassQueued = false
+
+  /** Set when the mapping moved before the opening tree finished composing. */
+  private workspaceIdsPending = false
+
   /** Depth of the initial-tree composition, whose states land in the tree itself. */
   private composingInitial = 0
 
@@ -153,7 +159,7 @@ export class ControlPlane extends TypertRemoteService {
     this.connections = new InstanceConnections(this.instances, {
       open: async (instance, transport) => await Upstream.connect(instance, transport),
       attach: (instance, upstream) => {
-        upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
+        this.observeUpstream(instance, upstream)
       },
     })
     this.announced = this.connections.states()
@@ -354,6 +360,20 @@ export class ControlPlane extends TypertRemoteService {
     return this.connections.states()
   }
 
+  /**
+   * Attach the per-connection listeners the live frames depend on.
+   *
+   * Session status is the fast path for a running turn; the Workspace mapping
+   * listener republishes the tree as soon as a baseline that arrived after the
+   * opening compose teaches the sidebar the real Workspace ids.
+   * @param instance - configured instance the connection belongs to.
+   * @param upstream - the freshly mounted connection.
+   */
+  private observeUpstream(instance: ResolvedInstance, upstream: InstanceConnection): void {
+    upstream.onSessionStatus((sessionId, running) => { this.publishStatus(instance.id, sessionId, running) })
+    upstream.onWorkspaceIdsChange?.(() => { this.notifyWorkspaceIds() })
+  }
+
   async snapshot(): Promise<InstanceNode[]> {
     const tree = await this.compose()
     this.publishStateChanges(tree)
@@ -376,6 +396,10 @@ export class ControlPlane extends TypertRemoteService {
       return tree
     } finally {
       this.composingInitial -= 1
+      if (this.composingInitial === 0 && this.workspaceIdsPending) {
+        this.workspaceIdsPending = false
+        this.notifyWorkspaceIds()
+      }
     }
   }
 
@@ -393,6 +417,7 @@ export class ControlPlane extends TypertRemoteService {
   private async compose(recover = true): Promise<InstanceNode[]> {
     if (recover) this.connections.recover()
     const rows = new Map<string, readonly SessionRow[]>()
+    const workspaceIds = new Map<string, ReadonlyMap<string, string>>()
     await Promise.all(this.instances.map(async (instance) => {
       const upstream = this.connections.get(instance.id)
       if (upstream === undefined) return
@@ -406,8 +431,18 @@ export class ControlPlane extends TypertRemoteService {
       } catch {
         // 保留该实例的 state/error，不写空数组：离线与"在线但无会话"必须可分
       }
+      try {
+        // `listSessions` started the Workspace follow; give its baseline a
+        // bounded chance to land so this very frame already names real ids.
+        // A generation that never answers must not hold the tree hostage.
+        await upstream.awaitWorkspaceIds?.()
+        const mapping = upstream.workspaceIdMap
+        if (mapping !== undefined) workspaceIds.set(instance.id, mapping)
+      } catch {
+        // No mapping: the rows stay and report no id, so no create control.
+      }
     }))
-    return buildTree(this.instances, rows, this.states())
+    return buildTree(this.instances, rows, this.states(), workspaceIds)
   }
 
   /**
@@ -428,14 +463,16 @@ export class ControlPlane extends TypertRemoteService {
    * fresh tree: a recovered instance has to bring its rows back with it, and a
    * newly unreachable one must stop showing clickable rows.
    * @param tree - tree the pass composed, already carrying the new states.
+   * @param forceTree - publish the tree even when reachability did not move
+   *   (the Workspace mapping changed under an unchanged connection).
    */
-  private publishStateChanges(tree: readonly InstanceNode[]): void {
+  private publishStateChanges(tree: readonly InstanceNode[], forceTree = false): void {
     if (this.eventHub.subscriberCount === 0) return
     const after = this.connections.states()
     const changed = diffInstanceStates(this.announced, after, this.instanceIds())
-    if (changed.length === 0) return
+    if (changed.length === 0 && !forceTree) return
     this.announced = after
-    this.eventHub.publishStates(changed)
+    if (changed.length > 0) this.eventHub.publishStates(changed)
     this.eventHub.publishTree(tree)
   }
 
@@ -461,17 +498,47 @@ export class ControlPlane extends TypertRemoteService {
     return this.statePassRunning
   }
 
-  /** Run queued state passes until no change arrived during the last one. */
+  /**
+   * Ask for one tree republication even when reachability did not move: the
+   * Workspace mapping arrived after the tree that preceded it.
+   * @returns resolves when the drain settled.
+   */
+  private requestTreePass(): Promise<void> {
+    this.treePassQueued = true
+    this.statePassRunning ??= this.drainStatePasses()
+    return this.statePassRunning
+  }
+
+  /** Run queued state/tree passes until no change arrived during the last one. */
   private async drainStatePasses(): Promise<void> {
     try {
-      while (this.statePassQueued) {
+      while (this.statePassQueued || this.treePassQueued) {
         this.statePassQueued = false
+        const forceTree = this.treePassQueued
+        this.treePassQueued = false
         const tree = await this.compose(false)
-        this.publishStateChanges(tree)
+        this.publishStateChanges(tree, forceTree)
       }
     } finally {
       this.statePassRunning = undefined
     }
+  }
+
+  /**
+   * Republish the tree because a Workspace baseline taught us new ids. This is
+   * what makes the sidebar's create control appear right after the stream
+   * opens instead of on the next poll.
+   */
+  private notifyWorkspaceIds(): void {
+    if (this.disposed) return
+    if (this.composingInitial > 0) {
+      this.workspaceIdsPending = true
+      return
+    }
+    if (this.eventHub.subscriberCount === 0) return
+    void this.requestTreePass().catch((error: unknown) => {
+      console.error('[control-plane] 工作区映射刷新失败:', error)
+    })
   }
 
   /**

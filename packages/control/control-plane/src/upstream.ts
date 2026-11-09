@@ -87,6 +87,22 @@ export class Upstream {
   private readonly pinned = new Set<string>()
   /** Instance-local Session ids the owner lists as archived. */
   private readonly archived = new Set<string>()
+  /**
+   * Canonical Workspace path → owner-local Workspace id, learned from the
+   * `workspace/follow` generation. The sidebar needs the real id to create a
+   * Session: the owner's registry looks workspaces up by id, not by path.
+   */
+  private readonly workspaceIds = new Map<string, string>()
+  /** Listeners told after the Workspace mapping moved (first baseline, upsert, remove). */
+  private readonly workspaceIdListeners = new Set<() => void>()
+  /** Resolves once a generation delivered its baseline, or ended without one. */
+  private readonly workspaceIdsReady: Promise<void>
+  /** Settles {@link workspaceIdsReady}; idempotent. */
+  private readonly settleWorkspaceIds: () => void
+  /** Whether the ready promise has settled. */
+  private workspaceIdsSettled = false
+  /** Set after the first waited compose timed out, so later composes never wait again. */
+  private workspaceIdsWaitExpired = false
   /** Forwards federated calls over this connection. */
   private readonly relay: RemoteRelay
   private stopStatus: (() => void) | undefined
@@ -98,6 +114,13 @@ export class Upstream {
   private constructor(instance: ResolvedInstance, root: Context) {
     this.instance = instance
     this.root = root
+    let settle: (() => void) | undefined
+    this.workspaceIdsReady = new Promise<void>((resolve) => { settle = resolve })
+    this.settleWorkspaceIds = () => {
+      if (this.workspaceIdsSettled) return
+      this.workspaceIdsSettled = true
+      settle?.()
+    }
     this.relay = new RemoteRelay({
       instanceId: instance.id,
       remote: () => (this.root as unknown as { remote?: unknown }).remote,
@@ -108,6 +131,57 @@ export class Upstream {
         this.lastError = message(cause)
       },
     })
+  }
+
+  /**
+   * Real Workspace id for one canonical path, when the owner has told us.
+   * @param path - canonical path the tree grouped a workspace under.
+   * @returns the owner-local Workspace id, or undefined before the mapping arrives.
+   */
+  workspaceIdForPath(path: string): string | undefined {
+    return this.workspaceIds.get(path)
+  }
+
+  /** The path → id mapping as it currently stands (read-only for callers). */
+  get workspaceIdMap(): ReadonlyMap<string, string> {
+    return this.workspaceIds
+  }
+
+  /** Whether the first baseline (or the end of its generation) was reached. */
+  private get workspaceIdsAreReady(): boolean {
+    return this.workspaceIdsSettled
+  }
+
+  /**
+   * Subscribe to Workspace-mapping changes, so a caller can republish a tree
+   * that was composed before the baseline arrived.
+   * @param listener - called after every change, without arguments.
+   * @returns disposer removing the listener.
+   */
+  onWorkspaceIdsChange(listener: () => void): () => void {
+    this.workspaceIdListeners.add(listener)
+    return () => { this.workspaceIdListeners.delete(listener) }
+  }
+
+  /**
+   * Wait for the first Workspace baseline, bounded.
+   *
+   * The first tree a browser receives should already name real Workspace ids,
+   * or the "+" control would wait a whole poll before it can work. Waiting is
+   * a one-time cost per connection: after the baseline lands (or the first
+   * wait expires) every later compose returns immediately.
+   * @param timeoutMs - cap for the very first wait.
+   * @returns when the baseline arrived, the generation ended, or the cap elapsed.
+   */
+  async awaitWorkspaceIds(timeoutMs = 1500): Promise<void> {
+    if (this.workspaceIdsSettled || this.workspaceIdsWaitExpired) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      this.workspaceIdsReady,
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs) }),
+    ])
+    if (timer !== undefined) clearTimeout(timer)
+    if (!this.workspaceIdsAreReady) this.workspaceIdsWaitExpired = true
   }
 
   /**
@@ -367,11 +441,22 @@ export class Upstream {
     const controller = new AbortController()
     this.stopWorkspaceFollow = () => { controller.abort() }
     try {
-      await drainWorkspaceSets(remote.workspace.follow(controller.signal), this.archived, this.pinned)
+      for await (const frame of remote.workspace.follow(controller.signal)) {
+        const changed = applyWorkspaceFrame(frame, this.archived, this.pinned, this.workspaceIds)
+        // The first baseline ends the one-time wait, even when it carries no
+        // workspaces: the tree must not keep waiting for an empty mapping.
+        if (frame.type === 'baseline') this.settleWorkspaceIds()
+        if (changed) {
+          for (const listener of [...this.workspaceIdListeners]) listener()
+        }
+      }
     } finally {
       this.stopWorkspaceFollow = undefined
       // The generation is over: the next compose may start another one.
       this.workspaceSets = undefined
+      // A generation that died before its baseline must not leave composes
+      // waiting on a stream that no longer exists.
+      this.settleWorkspaceIds()
     }
   }
 
@@ -397,6 +482,8 @@ export class Upstream {
       this.stopWorkspaceFollow = undefined
       await this.mounted?.()
     } finally {
+      // Release a compose parked on the Workspace baseline.
+      this.settleWorkspaceIds()
       await this.root.fiber.dispose()
     }
   }
@@ -462,6 +549,14 @@ export interface RawSummary {
 export interface WorkspaceSetsValue {
   readonly pinnedSessionIds?: readonly unknown[] | undefined
   readonly archivedSessionIds?: readonly unknown[] | undefined
+  /** Complete Workspace rows in this baseline; read for the path → id mapping. */
+  readonly items?: readonly WorkspaceFrameItem[] | undefined
+}
+
+/** One Workspace row as `workspace/follow` carries it (the fields read here). */
+export interface WorkspaceFrameItem {
+  readonly workspaceId?: unknown
+  readonly path?: unknown
 }
 
 /** One frame of the Workspace state stream. */
@@ -470,7 +565,7 @@ export type WorkspaceFollowFrame =
   | { readonly type: 'replace'; readonly value: WorkspaceSetsValue }
   | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly unknown[] }
   | { readonly type: 'archived'; readonly archivedSessionIds: readonly unknown[] }
-  | { readonly type: 'upsert'; readonly workspace?: unknown }
+  | { readonly type: 'upsert'; readonly workspace?: WorkspaceFrameItem | undefined }
   | { readonly type: 'remove'; readonly workspaceId?: unknown }
   | { readonly type: 'order'; readonly workspaceIds?: readonly unknown[] }
 
@@ -486,35 +581,106 @@ export type WorkspaceFollowFrame =
  */
 export async function drainWorkspaceSets(
   frames: AsyncIterable<WorkspaceFollowFrame>, archived: Set<string>, pinned: Set<string>,
+  workspaceIds?: Map<string, string>,
 ): Promise<void> {
-  for await (const frame of frames) applyWorkspaceFrame(frame, archived, pinned)
+  for await (const frame of frames) applyWorkspaceFrame(frame, archived, pinned, workspaceIds)
 }
 
 /**
- * Fold one Workspace frame into the cached pin/archive sets.
+ * Fold one Workspace frame into the cached pin/archive sets and, when given,
+ * the path → Workspace id mapping.
  * @param frame - frame from the owner's `workspace/follow` generation.
  * @param archived - archive set to replace when the frame carries one.
  * @param pinned - pin set to replace when the frame carries one.
+ * @param workspaceIds - mapping to maintain; omitted by callers that only
+ *   need the two Session sets.
+ * @returns whether the path → id mapping changed.
  */
 export function applyWorkspaceFrame(
   frame: WorkspaceFollowFrame, archived: Set<string>, pinned: Set<string>,
-): void {
+  workspaceIds?: Map<string, string>,
+): boolean {
   switch (frame.type) {
     case 'baseline':
     case 'replace':
       replaceIds(archived, frame.value.archivedSessionIds)
       replaceIds(pinned, frame.value.pinnedSessionIds)
-      return
+      // `replace` carries the complete state, so the mapping is rebuilt from
+      // it. An absent `items` is an older Host that never told us: keep what
+      // we have instead of clearing a mapping that is still true.
+      return workspaceIds !== undefined && Array.isArray(frame.value.items)
+        ? replaceWorkspaceIds(workspaceIds, frame.value.items)
+        : false
     case 'archived':
       replaceIds(archived, frame.archivedSessionIds)
-      return
+      return false
     case 'pinned':
       replaceIds(pinned, frame.pinnedSessionIds)
-      return
+      return false
+    case 'upsert':
+      return workspaceIds !== undefined && upsertWorkspaceId(workspaceIds, frame.workspace)
+    case 'remove':
+      return workspaceIds !== undefined && removeWorkspaceId(workspaceIds, frame.workspaceId)
     default:
-      // Workspace upserts, removals, and ordering: nothing the tree reads.
-      return
+      // Workspace ordering: nothing the tree reads.
+      return false
   }
+}
+
+/**
+ * Replace the whole path → id mapping with a baseline's rows.
+ * @param target - mapping to rebuild in place.
+ * @param items - complete Workspace rows from the baseline.
+ * @returns whether anything changed.
+ */
+function replaceWorkspaceIds(target: Map<string, string>, items: readonly WorkspaceFrameItem[]): boolean {
+  const next = new Map<string, string>()
+  for (const item of items) {
+    if (typeof item.path !== 'string' || item.path.length === 0) continue
+    if (typeof item.workspaceId !== 'string' || item.workspaceId.length === 0) continue
+    next.set(item.path, item.workspaceId)
+  }
+  if (next.size === target.size && [...next].every(([path, id]) => target.get(path) === id)) return false
+  target.clear()
+  for (const [path, id] of next) target.set(path, id)
+  return true
+}
+
+/**
+ * Fold one upserted Workspace row into the mapping.
+ * @param target - mapping to update.
+ * @param workspace - the row the frame carried.
+ * @returns whether anything changed.
+ */
+function upsertWorkspaceId(target: Map<string, string>, workspace: WorkspaceFrameItem | undefined): boolean {
+  if (workspace === undefined) return false
+  const { path, workspaceId } = workspace
+  if (typeof path !== 'string' || path.length === 0) return false
+  if (typeof workspaceId !== 'string' || workspaceId.length === 0) return false
+  if (target.get(path) === workspaceId) return false
+  // The same id must never stay registered under two paths.
+  for (const [candidate, id] of target) {
+    if (id === workspaceId && candidate !== path) target.delete(candidate)
+  }
+  target.set(path, workspaceId)
+  return true
+}
+
+/**
+ * Drop one removed Workspace id from the mapping.
+ * @param target - mapping to update.
+ * @param workspaceId - id the frame removed.
+ * @returns whether an entry was removed.
+ */
+function removeWorkspaceId(target: Map<string, string>, workspaceId: unknown): boolean {
+  if (typeof workspaceId !== 'string') return false
+  let removed = false
+  for (const [path, id] of target) {
+    if (id !== workspaceId) continue
+    target.delete(path)
+    removed = true
+  }
+  return removed
 }
 
 /**

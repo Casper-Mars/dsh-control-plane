@@ -43,12 +43,21 @@ function sessionOf(instanceId: string, sessionId: string): InstanceSessionView {
   return { key: `${instanceId}:${sessionId}`, sessionId, running: false, updatedAt: Date.now() }
 }
 
+/**
+ * Owner-local Workspace id for one path: a stable stand-in for the registry's
+ * `randomUUID`. The path is what the row is grouped by, never the id the owner
+ * accepts, so the two must stay distinguishable in these fixtures.
+ */
+function workspaceIdOf(path: string): string {
+  return `ws-${path.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
+}
+
 function workspaceOf(
   instanceId: string,
   path: string,
   sessions: readonly InstanceSessionView[],
 ): InstanceWorkspaceView {
-  return { key: `${instanceId}:${path}`, path, runningCount: 0, sessions }
+  return { key: `${instanceId}:${path}`, path, workspaceId: workspaceIdOf(path), runningCount: 0, sessions }
 }
 
 function groupOf(
@@ -208,7 +217,7 @@ describe('fix 3: only the newest requested frame lands', () => {
       return deferred.promise
     })
     const createSession = vi.fn((workspaceId: string) => (
-      workspaceId === 'race1:/repo' ? repo.promise : other.promise
+      workspaceId === 'race1:ws-repo' ? repo.promise : other.promise
     ))
     const { container } = render(
       <InstanceGroups

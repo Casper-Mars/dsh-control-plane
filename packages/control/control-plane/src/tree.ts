@@ -54,12 +54,16 @@ export function split(key: string): { instanceId: string; value: string } {
  * @param states - reachability per instance id; a missing entry means the
  *   caller composed rows for an instance whose reachability it did not track,
  *   which the tree reports as `connected`.
+ * @param workspaceIdsByInstance - per-instance `path → workspaceId` maps from
+ *   the owner's `workspace/follow` baseline. An instance without one keeps its
+ *   rows but reports no id, so the sidebar renders no create control there.
  * @returns instance nodes in configuration order, workspaces by path, sessions newest first.
  */
 export function buildTree(
   instances: readonly ResolvedInstance[],
   sessionsByInstance: ReadonlyMap<string, readonly SessionRow[]>,
   states: Readonly<Record<string, InstanceStateReport>> = {},
+  workspaceIdsByInstance: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map(),
 ): InstanceNode[] {
   return instances.map((instance) => {
     const all = sessionsByInstance.get(instance.id) ?? []
@@ -71,6 +75,7 @@ export function buildTree(
     const reported: InstanceStateReport | undefined = states[instance.id]
     const state: UpstreamState = reported?.state ?? 'connected'
     const groups = new Map<string, SessionNode[]>()
+    const workspaceIds = workspaceIdsByInstance.get(instance.id)
 
     for (const row of rows) {
       const path = row.cwd !== undefined && row.cwd.length > 0 ? row.cwd : NO_WORKSPACE
@@ -93,9 +98,13 @@ export function buildTree(
         // set has no order of its own here, so recency breaks the tie.
         const sorted = [...sessions].sort((a, b) =>
           Number(b.pinned === true) - Number(a.pinned === true) || b.updatedAt - a.updatedAt)
+        // Only a real registered Workspace has an id. The `(no workspace)`
+        // placeholder is a grouping artefact, never a create target.
+        const workspaceId = path === NO_WORKSPACE ? undefined : workspaceIds?.get(path)
         return {
           key: qualify(instance.id, path),
           path,
+          ...(workspaceId === undefined ? {} : { workspaceId }),
           sessions: sorted,
           runningCount: sorted.filter(session => session.running).length,
           latestUpdatedAt: sorted[0]?.updatedAt ?? 0,

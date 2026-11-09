@@ -76,6 +76,14 @@ export interface InstanceWorkspaceView {
   readonly key: string
   /** Path shown to the user, without the instance prefix. */
   readonly path: string
+  /**
+   * Owner-local Workspace id, when the control plane learned it from the
+   * instance's `workspace/follow` baseline. The owner's registry looks
+   * workspaces up by this id, so a row without one offers no create control
+   * (it would only produce `workspace/not-found`). Absent for the
+   * `(no workspace)` placeholder and before the baseline arrives.
+   */
+  readonly workspaceId?: string | undefined
   /** Sessions, newest activity first. */
   readonly sessions: readonly InstanceSessionView[]
   /** Sessions with a running turn in this workspace. */
@@ -150,11 +158,14 @@ export interface InstanceGroupsReaders {
   /**
    * Creates a Session in one workspace and resolves its owner-local id.
    *
-   * The argument is the complete federated Workspace key
-   * (`<instanceId>:<cwd>`): the control plane strips the prefix, forwards the
-   * call to the owning instance, and returns that instance's **bare** Session
-   * id. The caller must therefore qualify the result with the instance it used
-   * before navigating — the answer is never prefixed here.
+   * The argument is the federated **Workspace id**
+   * (`<instanceId>:<workspaceId>`): the control plane strips the instance
+   * prefix, forwards the call to the owner, and returns that instance's
+   * **bare** Session id. The caller must therefore qualify the result with the
+   * instance it used before navigating — the answer is never prefixed here.
+   *
+   * The id, not the path: the owner's Workspace registry looks rows up by the
+   * `randomUUID` it assigned, so a path would be `workspace/not-found`.
    *
    * Optional for the same reason as {@link openSession}: an isolated fixture
    * renders the tree without a Session service. A composed control-plane
@@ -739,27 +750,31 @@ export function InstanceGroups({
   /**
    * Create a Session in one workspace and open it.
    *
-   * The workspace key is already federated (`<instanceId>:<cwd>`), so the
-   * control plane routes the whole call; its answer is the owner-local id,
-   * which this section prefixes before navigating. A failed refresh does not
-   * fail the operation: the create already succeeded, the poll recovers the
-   * tree, and navigation still proceeds. A failed create stays inline under
-   * the row and restores the button once the attempt settles; it is dropped
-   * only when this workspace creates successfully, so a retry never runs
-   * behind a blank line.
-   * @param instanceId - owning instance, used to qualify the returned Session id.
-   * @param workspaceKey - complete federated Workspace key of the row.
+   * The owner-local Workspace id is federated with the instance
+   * (`<instanceId>:<workspaceId>`), so the control plane routes the whole call;
+   * its answer is the owner-local Session id, which this section prefixes
+   * before navigating. A failed refresh does not fail the operation: the
+   * create already succeeded, the poll recovers the tree, and navigation still
+   * proceeds. A failed create stays inline under the row and restores the
+   * button once the attempt settles; it is dropped only when this workspace
+   * creates successfully, so a retry never runs behind a blank line.
+   * @param instanceId - owning instance, used to qualify both ids.
+   * @param workspaceKey - row key (`<instanceId>:<cwd>`), used for the local
+   *   pending/failure state and as the display identity.
+   * @param workspaceId - owner-local Workspace id; the value the owner accepts.
    * @param workspacePath - path the row was grouped under, forwarded as the
    * opened Session's `cwd` hint.
    */
-  const createSessionIn = (instanceId: string, workspaceKey: string, workspacePath: string): void => {
+  const createSessionIn = (
+    instanceId: string, workspaceKey: string, workspaceId: string, workspacePath: string,
+  ): void => {
     const { createSession } = readers.current
     if (createSession === undefined || creatingKeys.current.has(workspaceKey)) return
     creatingKeys.current.add(workspaceKey)
     setCreating(previous => [...previous, workspaceKey])
     void (async () => {
       try {
-        const sessionId = await createSession(workspaceKey)
+        const sessionId = await createSession(`${instanceId}:${workspaceId}`)
         if (!isMounted()) return
         // The attempt succeeded: the reason for the previous failure no longer
         // describes this workspace. Cleared here, not when the retry starts, so
@@ -868,24 +883,34 @@ export function InstanceGroups({
                 create reader is wired: on a connecting group it is not offered
                 yet, and without a reader it would be a button that cannot do
                 anything. The gate reads the prop (not the ref) so a reader that
-                appears later re-renders the control immediately. */}
-            {expanded && group.state !== 'unreachable' && group.workspaces.map(workspace => (
-              <WorkspaceGroup
-                key={workspace.key}
-                workspace={workspace}
-                canCreate={group.state === 'connected' && createSession !== undefined}
-                creating={creating.includes(workspace.key)}
-                createFailure={createFailures[workspace.key]}
-                state={disclosureState}
-                now={now}
-                current={currentId}
-                onOpen={open}
-                onCreate={() => { createSessionIn(group.instanceId, workspace.key, workspace.path) }}
-                getTriggerProps={menu?.getTriggerProps}
-                unavailableReason={unavailableReason}
-                t={t}
-              />
-            ))}
+                appears later re-renders the control immediately. A workspace
+                the owner has not identified by id offers no control either:
+                the owner's registry would reject a path as `workspace/not-found`. */}
+            {expanded && group.state !== 'unreachable' && group.workspaces.map((workspace) => {
+              const workspaceId = workspace.workspaceId
+              return (
+                <WorkspaceGroup
+                  key={workspace.key}
+                  workspace={workspace}
+                  canCreate={
+                    group.state === 'connected' && createSession !== undefined && workspaceId !== undefined
+                  }
+                  creating={creating.includes(workspace.key)}
+                  createFailure={createFailures[workspace.key]}
+                  state={disclosureState}
+                  now={now}
+                  current={currentId}
+                  onOpen={open}
+                  onCreate={() => {
+                    if (workspaceId === undefined) return
+                    createSessionIn(group.instanceId, workspace.key, workspaceId, workspace.path)
+                  }}
+                  getTriggerProps={menu?.getTriggerProps}
+                  unavailableReason={unavailableReason}
+                  t={t}
+                />
+              )
+            })}
           </div>
         )
       })}

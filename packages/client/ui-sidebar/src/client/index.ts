@@ -268,8 +268,9 @@ export function apply(ctx: ClientContext): void {
     fetchTree: readTree,
     // 新建成功后立即重读，而不是等下一次 6s 轮询。
     refreshTree: readTree,
-    // 工作区键本身就是 `<instanceId>:<cwd>`；联邦路由剥前缀转发，返回的是
-    // 该实例的裸 sessionId，前缀由实例分区在导航前拼回。
+    // 工作区行携带的是真实的 `<instanceId>:<workspaceId>`；联邦路由剥前缀转发，
+    // 远端按 id 查注册表（路径会 workspace/not-found），返回裸 sessionId，
+    // 前缀由实例分区在导航前拼回。
     createSession,
     retry: async (instanceId) => {
       const controlPlane = controlPlaneRemote(ctx)

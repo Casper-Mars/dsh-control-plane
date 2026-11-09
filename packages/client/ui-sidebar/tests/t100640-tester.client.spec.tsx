@@ -92,12 +92,21 @@ function sessionOf(instanceId: string, sessionId: string, title?: string): Insta
   }
 }
 
+/**
+ * Owner-local Workspace id for one path: a stable stand-in for the registry's
+ * `randomUUID`. The row key stays the path; only a real id may be sent to the
+ * owner, so the two must stay distinguishable in these fixtures.
+ */
+function workspaceIdOf(path: string): string {
+  return `ws-${path.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
+}
+
 function workspaceOf(
   instanceId: string,
   path: string,
   sessions: readonly InstanceSessionView[],
 ): InstanceWorkspaceView {
-  return { key: `${instanceId}:${path}`, path, runningCount: 0, sessions }
+  return { key: `${instanceId}:${path}`, path, workspaceId: workspaceIdOf(path), runningCount: 0, sessions }
 }
 
 function groupOf(
@@ -175,10 +184,10 @@ describe('1. complete create chain', () => {
     fireEvent.click(button)
     await settleChain()
 
-    expect(createSession).toHaveBeenCalledExactlyOnceWith('chain1:/repo')
+    expect(createSession).toHaveBeenCalledExactlyOnceWith('chain1:ws-repo')
     expect(refreshTree).toHaveBeenCalledOnce()
     expect(openSession).toHaveBeenCalledExactlyOnceWith('chain1:new-1', '/repo')
-    expect(order).toEqual(['create:chain1:/repo', 'refresh', 'open:chain1:new-1'])
+    expect(order).toEqual(['create:chain1:ws-repo', 'refresh', 'open:chain1:new-1'])
     // The refreshed frame is committed, so the row is visible immediately.
     expect(container.querySelector('[data-session-key="chain1:new-1"]')).not.toBeNull()
     expect(createButtonOf(container, 'chain1:/repo').disabled).toBe(false)
@@ -285,10 +294,10 @@ describe('1b. apply() wiring', () => {
       fireEvent.click(createButtonOf(view.container, 'wire1:/repo'))
       await settleChain()
 
-      expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'wire1:/repo' })
+      expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'wire1:ws-repo' })
       expect(openSession).toHaveBeenCalledExactlyOnceWith('wire1:s-new', { cwd: '/repo' })
       // The create, then the post-create read, then navigation.
-      expect(order.slice(-3)).toEqual(['create:wire1:/repo', 'tree', 'open:wire1:s-new'])
+      expect(order.slice(-3)).toEqual(['create:wire1:ws-repo', 'tree', 'open:wire1:s-new'])
       expect(tree).toHaveBeenCalledTimes(2)
     } finally {
       await sidebar.dispose()
@@ -498,7 +507,7 @@ describe('4. concurrency', () => {
       workspaceOf('conc2', '/other', [sessionOf('conc2', 's-2')]),
     ])]
     const createSession = vi.fn((workspaceId: string) => (
-      workspaceId === 'conc2:/repo' ? repo.promise : other.promise
+      workspaceId === 'conc2:ws-repo' ? repo.promise : other.promise
     ))
     const openSession = vi.fn()
     const { container } = renderSection({
@@ -515,8 +524,8 @@ describe('4. concurrency', () => {
     await settle()
 
     expect(createSession).toHaveBeenCalledTimes(2)
-    expect(createSession).toHaveBeenCalledWith('conc2:/repo')
-    expect(createSession).toHaveBeenCalledWith('conc2:/other')
+    expect(createSession).toHaveBeenCalledWith('conc2:ws-repo')
+    expect(createSession).toHaveBeenCalledWith('conc2:ws-other')
     expect(createButtonOf(container, 'conc2:/repo').disabled).toBe(true)
     expect(createButtonOf(container, 'conc2:/other').disabled).toBe(true)
 
@@ -644,7 +653,7 @@ describe('5. failure UX', () => {
       workspaceOf('fail5', '/other', [sessionOf('fail5', 's-2')]),
     ])]
     const createSession = vi.fn(async (workspaceId: string) => {
-      if (workspaceId === 'fail5:/repo') throw new Error('repo down')
+      if (workspaceId === 'fail5:ws-repo') throw new Error('repo down')
       return 'new-other'
     })
     const { container } = renderSection({
@@ -920,7 +929,7 @@ describe('7. control-plane mode and the state gate', () => {
     await settle()
     fireEvent.click(createButtonOf(view.container, 'gate3:/repo'))
     await settleChain()
-    expect(createSession).toHaveBeenCalledExactlyOnceWith('gate3:/repo')
+    expect(createSession).toHaveBeenCalledExactlyOnceWith('gate3:ws-repo')
     expect(openSession).toHaveBeenCalledExactlyOnceWith('gate3:new-reader', '/repo')
   })
 })
@@ -1150,7 +1159,7 @@ describe('9. fix re-verification', () => {
       return deferred.promise
     })
     const createSession = vi.fn((workspaceId: string) => (
-      workspaceId === 're4:/repo' ? repo.promise : other.promise
+      workspaceId === 're4:ws-repo' ? repo.promise : other.promise
     ))
     const { container } = renderSection({
       groups: initial,
@@ -1294,7 +1303,7 @@ describe('risk probes', () => {
       return reads === 1 ? fresh : stale
     })
     const createSession = vi.fn((workspaceId: string) => (
-      workspaceId === 'race1:/repo' ? repo.promise : other.promise
+      workspaceId === 'race1:ws-repo' ? repo.promise : other.promise
     ))
     const { container } = renderSection({
       groups: [groupOf('race1', [
@@ -1360,7 +1369,7 @@ describe('failure placement', () => {
       workspaceOf('place1', '/other', [sessionOf('place1', 's-2')]),
     ])]
     const createSession = vi.fn(async (workspaceId: string) => {
-      if (workspaceId === 'place1:/repo') throw new Error('repo unavailable')
+      if (workspaceId === 'place1:ws-repo') throw new Error('repo unavailable')
       return 'new-other'
     })
     const { container } = renderSection({

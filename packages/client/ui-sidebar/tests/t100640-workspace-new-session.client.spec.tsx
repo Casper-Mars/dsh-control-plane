@@ -64,8 +64,17 @@ function session(sessionId: string, title?: string): InstanceSessionView {
 
 const ROWS: readonly InstanceSessionView[] = [session('s-1', 'Fix the login flow'), session('s-2')]
 
-function workspaceView(sessions: readonly InstanceSessionView[] = ROWS): InstanceWorkspaceView {
-  return { key: 'alpha:/repo', path: '/repo', runningCount: 0, sessions }
+function workspaceView(
+  sessions: readonly InstanceSessionView[] = ROWS,
+  workspaceId: string | undefined = 'ws-1',
+): InstanceWorkspaceView {
+  return {
+    key: 'alpha:/repo',
+    path: '/repo',
+    ...(workspaceId === undefined ? {} : { workspaceId }),
+    runningCount: 0,
+    sessions,
+  }
 }
 
 function groupView(overrides: {
@@ -137,11 +146,12 @@ describe('workspace create entry', () => {
     fireEvent.click(button)
     await settleChain()
 
-    expect(createSession).toHaveBeenCalledExactlyOnceWith('alpha:/repo')
+    // The owner's registry looks Workspaces up by its own id, never by path.
+    expect(createSession).toHaveBeenCalledExactlyOnceWith('alpha:ws-1')
     expect(refreshTree).toHaveBeenCalledOnce()
     // The id is qualified with the same instance the workspace key named.
     expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:new-1', '/repo')
-    expect(order).toEqual(['create:alpha:/repo', 'refresh', 'open:alpha:new-1'])
+    expect(order).toEqual(['create:alpha:ws-1', 'refresh', 'open:alpha:new-1'])
     // The refreshed frame landed, so the new row is already in the tree.
     expect(container.querySelector('[data-session-key="alpha:new-1"]')).not.toBeNull()
     // A settled attempt restores the button.
@@ -233,6 +243,46 @@ describe('workspace create entry', () => {
     // Modified chords stay inert: the press is consumed but nothing runs.
     fireEvent.keyDown(createButton(container), { key: 'Enter', ctrlKey: true })
     expect(createSession).toHaveBeenCalledTimes(2)
+  })
+
+  it('omits the entry for a workspace the owner has not identified by id', async () => {
+    const unregisteredWorkspace: InstanceWorkspaceView = {
+      key: 'alpha:/repo', path: '/repo', runningCount: 0, sessions: ROWS,
+    }
+    const unregistered = [groupView({ workspaces: [unregisteredWorkspace] })]
+    const { container } = renderTree({
+      groups: unregistered,
+      createSession: vi.fn(async () => 'new-1'),
+      refreshTree: async () => unregistered,
+      openSession: vi.fn(),
+    })
+    await settle()
+
+    // The row still folds and lists its sessions; only the create control is
+    // absent, because a path would be rejected as `workspace/not-found`.
+    expect(container.querySelectorAll('[data-session-key]')).toHaveLength(2)
+    expect(container.querySelector('[data-workspace-key="alpha:/repo"]')).not.toBeNull()
+    expect(container.querySelector('[data-workspace-create]')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Create a session in /repo' })).toBeNull()
+  })
+
+  it('never offers the entry on the (no workspace) placeholder', async () => {
+    const placeholder = [{
+      key: 'alpha:(no workspace)',
+      path: '(no workspace)',
+      runningCount: 0,
+      sessions: ROWS,
+    }]
+    const { container } = renderTree({
+      groups: [groupView({ workspaces: placeholder })],
+      createSession: vi.fn(async () => 'new-1'),
+      refreshTree: async () => placeholder,
+      openSession: vi.fn(),
+    })
+    await settle()
+
+    expect(container.querySelector('[data-workspace-key="alpha:(no workspace)"]')).not.toBeNull()
+    expect(container.querySelector('[data-workspace-create]')).toBeNull()
   })
 
   it('offers the entry only on connected instances', async () => {
@@ -351,7 +401,7 @@ describe('sidebar.instances wiring', () => {
       fireEvent.click(createButton(view.container))
       await settleChain()
 
-      expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'alpha:/repo' })
+      expect(create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'alpha:ws-1' })
       // The same reader serves the post-create refresh and did not wait for a poll.
       expect(tree).toHaveBeenCalledTimes(2)
       expect(openSession).toHaveBeenCalledExactlyOnceWith('alpha:s-new', { cwd: '/repo' })

@@ -60,6 +60,13 @@ export interface WorkspaceNode {
   readonly key: string
   /** Path shown to the user, without the instance prefix. */
   readonly path: string
+  /**
+   * Owner-local Workspace id (`randomUUID` in the registry), when the owner
+   * told us which Workspace backs this path. Creating a Session needs this id,
+   * not the path; absent while the `workspace/follow` baseline has not arrived,
+   * and for the `(no workspace)` placeholder.
+   */
+  readonly workspaceId?: string | undefined
   /** Sessions, newest activity first. */
   readonly sessions: readonly SessionNode[]
   /** Sessions with a running turn in this workspace. */

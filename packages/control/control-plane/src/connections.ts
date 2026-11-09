@@ -43,6 +43,15 @@ export interface InstanceConnection {
   /** Subscribes to session running-state changes. */
   onSessionStatus: (listener: (sessionId: string, running: boolean) => void) => () => void
   /**
+   * Waits (bounded) for the owner's first Workspace baseline. Absent on a
+   * structural double, which simply contributes no Workspace ids.
+   */
+  awaitWorkspaceIds?: (timeoutMs?: number) => Promise<void>
+  /** Canonical path → owner-local Workspace id, as `workspace/follow` reported it. */
+  readonly workspaceIdMap?: ReadonlyMap<string, string>
+  /** Subscribes to Workspace-mapping changes. */
+  onWorkspaceIdsChange?: (listener: () => void) => () => void
+  /**
    * Forwards one federated unary call; absent on a connection that cannot relay
    * (a structural test double, not a live `Upstream`).
    */
