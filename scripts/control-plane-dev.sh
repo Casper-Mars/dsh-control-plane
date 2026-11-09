@@ -8,14 +8,16 @@
 # 用法：
 #   ./scripts/control-plane-dev.sh                 # 默认端口 3095
 #   PORT=3100 ./scripts/control-plane-dev.sh
-#   INSTANCES_FILE=my.json ./scripts/control-plane-dev.sh
 #   SKIP_BUILD=1 ./scripts/control-plane-dev.sh    # 跳过构建，直接使用现有 lib 产物
+#
+# 测试用脚本：实例配置固定指向仓库内的 control-plane/control-plane.json。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DSH_HOME="${DSH_HOME:-$ROOT/.devhome-cp}"
 PORT="${PORT:-3095}"
-INSTANCES_FILE="${INSTANCES_FILE:-$ROOT/control-plane/control-plane.json}"
+# 测试用：固定使用仓库内的测试实例配置。
+INSTANCES_FILE="$ROOT/control-plane/control-plane.json"
 
 [ -f "$INSTANCES_FILE" ] || {
   echo "缺少实例配置：$INSTANCES_FILE" >&2

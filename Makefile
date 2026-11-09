@@ -17,7 +17,7 @@ help:
 	@echo "the Web commands accept dsh web flags, the Desktop launcher accepts none."
 	@echo "make local       起 Web UI（隔离 DSH_HOME=./.devhome，默认端口 3099）"
 	@echo "PORT=3098 make local  换端口"
-	@echo "make control-plane  起控制面 Host（dsh-control-plane-app + --config）"
+	@echo "make control-plane  起控制面 Host（dsh-control-plane-app + 测试配置）"
 
 build:
 	$(PNPM) run build
