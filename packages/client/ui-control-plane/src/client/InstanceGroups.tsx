@@ -76,6 +76,8 @@ export interface InstanceWorkspaceView {
   readonly key: string
   /** Path shown to the user, without the instance prefix. */
   readonly path: string
+  /** User-visible Workspace title from the owner; absent means fall back to `path`. */
+  readonly title?: string | undefined
   /**
    * Owner-local Workspace id, when the control plane learned it from the
    * instance's `workspace/follow` baseline. The owner's registry looks
@@ -997,6 +999,7 @@ function WorkspaceGroup({
   const watermark = state.watermarks[workspace.key] ?? WATERMARK_BASE
   const sessions = workspace.sessions.slice(0, watermark)
   const hidden = workspace.sessions.length - sessions.length
+  const label = workspace.title ?? workspace.path
   return (
     <>
       {/* A row container, not a control: the fold button and the create button
@@ -1026,7 +1029,7 @@ function WorkspaceGroup({
               <IconTriangleRightFillRegular className={clsx(css.arrow, expanded && css.arrowOpen)} />
             </span>
           </span>
-          <span className={css.title}>{workspace.path}</span>
+          <span className={css.title}>{label}</span>
           <span className={css.count}>{workspace.sessions.length}</span>
         </button>
         {canCreate && (
@@ -1037,7 +1040,7 @@ function WorkspaceGroup({
           <button
             type="button"
             className={css.workspaceCreate}
-            aria-label={t('instances.workspace.newSession', { workspace: workspace.path })}
+            aria-label={t('instances.workspace.newSession', { workspace: label })}
             data-workspace-create={workspace.key}
             disabled={creating}
             aria-busy={creating ? 'true' : undefined}
@@ -1056,7 +1059,7 @@ function WorkspaceGroup({
       </div>
       {createFailure !== undefined && (
         <p className={css.createFailure} role="alert" data-create-failure={workspace.key}>
-          {t('instances.createFailed', { name: workspace.path, message: createFailure })}
+          {t('instances.createFailed', { name: label, message: createFailure })}
         </p>
       )}
       {expanded && sessions.map((session) => {

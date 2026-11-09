@@ -45,6 +45,7 @@ function session(instanceId: string, index: number, minutesAgo = index): Instanc
 interface GroupOverrides {
   readonly state?: InstanceGroupView['state']
   readonly error?: string | undefined
+  readonly title?: string | undefined
 }
 
 /** One instance group with `count` sessions in one workspace. */
@@ -61,6 +62,7 @@ function group(instanceId: string, count: number, path = '/workspace', overrides
       : [{
         key: `${instanceId}:${path}`,
         path,
+        ...(overrides.title === undefined ? {} : { title: overrides.title }),
         sessions: Array.from({ length: count }, (_, index) => session(instanceId, index)),
         runningCount: 1,
       }],
@@ -71,6 +73,17 @@ function group(instanceId: string, count: number, path = '/workspace', overrides
 function retrySpy(): ReturnType<typeof vi.fn<(instanceId: string) => Promise<void>>> {
   return vi.fn<(instanceId: string) => Promise<void>>(async () => {})
 }
+
+describe('InstanceGroups workspace label', () => {
+  it('renders the owner title instead of the path when one is reported', async () => {
+    render(
+      <InstanceGroups fetchTree={async () => [group('cto', 1, '/workspace', { title: 'workspace' })]} retry={retrySpy()} t={t} />,
+    )
+    await settle()
+    expect(screen.getByText('workspace')).toBeTruthy()
+    expect(screen.queryByText('/workspace')).toBeNull()
+  })
+})
 
 describe('InstanceGroups header', () => {
   it('renders the instance name, a reachability dot and the session count', async () => {

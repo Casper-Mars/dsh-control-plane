@@ -57,6 +57,8 @@ export function split(key: string): { instanceId: string; value: string } {
  * @param workspaceIdsByInstance - per-instance `path → workspaceId` maps from
  *   the owner's `workspace/follow` baseline. An instance without one keeps its
  *   rows but reports no id, so the sidebar renders no create control there.
+ * @param workspaceTitlesByInstance - per-instance `path → title` maps from the
+ *   same baseline; a missing title falls back to the path in the browser.
  * @returns instance nodes in configuration order, workspaces by path, sessions newest first.
  */
 export function buildTree(
@@ -64,6 +66,7 @@ export function buildTree(
   sessionsByInstance: ReadonlyMap<string, readonly SessionRow[]>,
   states: Readonly<Record<string, InstanceStateReport>> = {},
   workspaceIdsByInstance: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map(),
+  workspaceTitlesByInstance: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map(),
 ): InstanceNode[] {
   return instances.map((instance) => {
     const all = sessionsByInstance.get(instance.id) ?? []
@@ -76,6 +79,7 @@ export function buildTree(
     const state: UpstreamState = reported?.state ?? 'connected'
     const groups = new Map<string, SessionNode[]>()
     const workspaceIds = workspaceIdsByInstance.get(instance.id)
+    const workspaceTitles = workspaceTitlesByInstance.get(instance.id)
 
     for (const row of rows) {
       const path = row.cwd !== undefined && row.cwd.length > 0 ? row.cwd : NO_WORKSPACE
@@ -101,9 +105,11 @@ export function buildTree(
         // Only a real registered Workspace has an id. The `(no workspace)`
         // placeholder is a grouping artefact, never a create target.
         const workspaceId = path === NO_WORKSPACE ? undefined : workspaceIds?.get(path)
+        const title = path === NO_WORKSPACE ? undefined : workspaceTitles?.get(path)
         return {
           key: qualify(instance.id, path),
           path,
+          ...(title === undefined ? {} : { title }),
           ...(workspaceId === undefined ? {} : { workspaceId }),
           sessions: sorted,
           runningCount: sorted.filter(session => session.running).length,

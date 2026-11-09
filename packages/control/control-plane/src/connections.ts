@@ -49,6 +49,8 @@ export interface InstanceConnection {
   awaitWorkspaceIds?: (timeoutMs?: number) => Promise<void>
   /** Canonical path → owner-local Workspace id, as `workspace/follow` reported it. */
   readonly workspaceIdMap?: ReadonlyMap<string, string>
+  /** Canonical path → user-visible Workspace title, from the same frames. */
+  readonly workspaceTitleMap?: ReadonlyMap<string, string>
   /** Subscribes to Workspace-mapping changes. */
   onWorkspaceIdsChange?: (listener: () => void) => () => void
   /**

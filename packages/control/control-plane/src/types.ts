@@ -60,6 +60,8 @@ export interface WorkspaceNode {
   readonly key: string
   /** Path shown to the user, without the instance prefix. */
   readonly path: string
+  /** User-visible Workspace title from the owner, when it reported one. */
+  readonly title?: string | undefined
   /**
    * Owner-local Workspace id (`randomUUID` in the registry), when the owner
    * told us which Workspace backs this path. Creating a Session needs this id,

@@ -93,6 +93,8 @@ export class Upstream {
    * Session: the owner's registry looks workspaces up by id, not by path.
    */
   private readonly workspaceIds = new Map<string, string>()
+  /** Canonical Workspace path → user-visible title, from the same frames. */
+  private readonly workspaceTitles = new Map<string, string>()
   /** Listeners told after the Workspace mapping moved (first baseline, upsert, remove). */
   private readonly workspaceIdListeners = new Set<() => void>()
   /** Resolves once a generation delivered its baseline, or ended without one. */
@@ -145,6 +147,11 @@ export class Upstream {
   /** The path → id mapping as it currently stands (read-only for callers). */
   get workspaceIdMap(): ReadonlyMap<string, string> {
     return this.workspaceIds
+  }
+
+  /** The path → title mapping as it currently stands. */
+  get workspaceTitleMap(): ReadonlyMap<string, string> {
+    return this.workspaceTitles
   }
 
   /** Whether the first baseline (or the end of its generation) was reached. */
@@ -442,7 +449,7 @@ export class Upstream {
     this.stopWorkspaceFollow = () => { controller.abort() }
     try {
       for await (const frame of remote.workspace.follow(controller.signal)) {
-        const changed = applyWorkspaceFrame(frame, this.archived, this.pinned, this.workspaceIds)
+        const changed = applyWorkspaceFrame(frame, this.archived, this.pinned, this.workspaceIds, this.workspaceTitles)
         // The first baseline ends the one-time wait, even when it carries no
         // workspaces: the tree must not keep waiting for an empty mapping.
         if (frame.type === 'baseline') this.settleWorkspaceIds()
@@ -557,6 +564,8 @@ export interface WorkspaceSetsValue {
 export interface WorkspaceFrameItem {
   readonly workspaceId?: unknown
   readonly path?: unknown
+  /** User-visible title the owner's browser shows for this Workspace. */
+  readonly title?: unknown
 }
 
 /** One frame of the Workspace state stream. */
@@ -581,9 +590,9 @@ export type WorkspaceFollowFrame =
  */
 export async function drainWorkspaceSets(
   frames: AsyncIterable<WorkspaceFollowFrame>, archived: Set<string>, pinned: Set<string>,
-  workspaceIds?: Map<string, string>,
+  workspaceIds?: Map<string, string>, workspaceTitles?: Map<string, string>,
 ): Promise<void> {
-  for await (const frame of frames) applyWorkspaceFrame(frame, archived, pinned, workspaceIds)
+  for await (const frame of frames) applyWorkspaceFrame(frame, archived, pinned, workspaceIds, workspaceTitles)
 }
 
 /**
@@ -598,7 +607,7 @@ export async function drainWorkspaceSets(
  */
 export function applyWorkspaceFrame(
   frame: WorkspaceFollowFrame, archived: Set<string>, pinned: Set<string>,
-  workspaceIds?: Map<string, string>,
+  workspaceIds?: Map<string, string>, workspaceTitles?: Map<string, string>,
 ): boolean {
   switch (frame.type) {
     case 'baseline':
@@ -609,7 +618,7 @@ export function applyWorkspaceFrame(
       // it. An absent `items` is an older Host that never told us: keep what
       // we have instead of clearing a mapping that is still true.
       return workspaceIds !== undefined && Array.isArray(frame.value.items)
-        ? replaceWorkspaceIds(workspaceIds, frame.value.items)
+        ? replaceWorkspaceIds(workspaceIds, frame.value.items, workspaceTitles)
         : false
     case 'archived':
       replaceIds(archived, frame.archivedSessionIds)
@@ -618,9 +627,9 @@ export function applyWorkspaceFrame(
       replaceIds(pinned, frame.pinnedSessionIds)
       return false
     case 'upsert':
-      return workspaceIds !== undefined && upsertWorkspaceId(workspaceIds, frame.workspace)
+      return workspaceIds !== undefined && upsertWorkspaceId(workspaceIds, frame.workspace, workspaceTitles)
     case 'remove':
-      return workspaceIds !== undefined && removeWorkspaceId(workspaceIds, frame.workspaceId)
+      return workspaceIds !== undefined && removeWorkspaceId(workspaceIds, frame.workspaceId, workspaceTitles)
     default:
       // Workspace ordering: nothing the tree reads.
       return false
@@ -633,16 +642,27 @@ export function applyWorkspaceFrame(
  * @param items - complete Workspace rows from the baseline.
  * @returns whether anything changed.
  */
-function replaceWorkspaceIds(target: Map<string, string>, items: readonly WorkspaceFrameItem[]): boolean {
+function replaceWorkspaceIds(
+  target: Map<string, string>, items: readonly WorkspaceFrameItem[], titles?: Map<string, string>,
+): boolean {
   const next = new Map<string, string>()
+  const nextTitles = new Map<string, string>()
   for (const item of items) {
     if (typeof item.path !== 'string' || item.path.length === 0) continue
     if (typeof item.workspaceId !== 'string' || item.workspaceId.length === 0) continue
     next.set(item.path, item.workspaceId)
+    if (typeof item.title === 'string' && item.title.length > 0) nextTitles.set(item.path, item.title)
   }
-  if (next.size === target.size && [...next].every(([path, id]) => target.get(path) === id)) return false
+  const idsChanged = next.size !== target.size || [...next].some(([path, id]) => target.get(path) !== id)
+  const titlesChanged = titles !== undefined
+    && (nextTitles.size !== titles.size || [...nextTitles].some(([path, title]) => titles.get(path) !== title))
+  if (!idsChanged && !titlesChanged) return false
   target.clear()
   for (const [path, id] of next) target.set(path, id)
+  if (titles !== undefined) {
+    titles.clear()
+    for (const [path, title] of nextTitles) titles.set(path, title)
+  }
   return true
 }
 
@@ -652,18 +672,35 @@ function replaceWorkspaceIds(target: Map<string, string>, items: readonly Worksp
  * @param workspace - the row the frame carried.
  * @returns whether anything changed.
  */
-function upsertWorkspaceId(target: Map<string, string>, workspace: WorkspaceFrameItem | undefined): boolean {
+function upsertWorkspaceId(
+  target: Map<string, string>, workspace: WorkspaceFrameItem | undefined, titles?: Map<string, string>,
+): boolean {
   if (workspace === undefined) return false
   const { path, workspaceId } = workspace
   if (typeof path !== 'string' || path.length === 0) return false
   if (typeof workspaceId !== 'string' || workspaceId.length === 0) return false
-  if (target.get(path) === workspaceId) return false
-  // The same id must never stay registered under two paths.
-  for (const [candidate, id] of target) {
-    if (id === workspaceId && candidate !== path) target.delete(candidate)
+  let changed = false
+  if (target.get(path) !== workspaceId) {
+    // The same id must never stay registered under two paths.
+    for (const [candidate, id] of target) {
+      if (id === workspaceId && candidate !== path) {
+        target.delete(candidate)
+        titles?.delete(candidate)
+      }
+    }
+    target.set(path, workspaceId)
+    changed = true
   }
-  target.set(path, workspaceId)
-  return true
+  if (titles !== undefined) {
+    const title = typeof workspace.title === 'string' && workspace.title.length > 0 ? workspace.title : undefined
+    if (title === undefined) {
+      if (titles.delete(path)) changed = true
+    } else if (titles.get(path) !== title) {
+      titles.set(path, title)
+      changed = true
+    }
+  }
+  return changed
 }
 
 /**
@@ -672,12 +709,15 @@ function upsertWorkspaceId(target: Map<string, string>, workspace: WorkspaceFram
  * @param workspaceId - id the frame removed.
  * @returns whether an entry was removed.
  */
-function removeWorkspaceId(target: Map<string, string>, workspaceId: unknown): boolean {
+function removeWorkspaceId(
+  target: Map<string, string>, workspaceId: unknown, titles?: Map<string, string>,
+): boolean {
   if (typeof workspaceId !== 'string') return false
   let removed = false
   for (const [path, id] of target) {
     if (id !== workspaceId) continue
     target.delete(path)
+    titles?.delete(path)
     removed = true
   }
   return removed

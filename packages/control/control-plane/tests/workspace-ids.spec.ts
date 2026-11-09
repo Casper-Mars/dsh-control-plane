@@ -55,6 +55,34 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('workspace titles', () => {
+  it('stamps the owner title and follows upsert/remove', () => {
+    const ids = new Map<string, string>()
+    const titles = new Map<string, string>()
+    const archived = new Set<string>()
+    const pinned = new Set<string>()
+    applyWorkspaceFrame(baseline([{ workspaceId: 'ws-1', path: '/repo', title: 'workspace' }]), archived, pinned, ids, titles)
+    expect(titles.get('/repo')).toBe('workspace')
+    applyWorkspaceFrame({ type: 'upsert', workspace: { workspaceId: 'ws-1', path: '/repo', title: 'renamed' } }, archived, pinned, ids, titles)
+    expect(titles.get('/repo')).toBe('renamed')
+    applyWorkspaceFrame({ type: 'remove', workspaceId: 'ws-1' }, archived, pinned, ids, titles)
+    expect(titles.has('/repo')).toBe(false)
+  })
+
+  it('renders the title on the tree and leaves unregistered paths without one', () => {
+    const [group] = buildTree(
+      INSTANCES,
+      new Map([['alpha', [row('s-repo', '/repo'), row('s-other', '/other')]]]),
+      {},
+      new Map(),
+      new Map([['alpha', new Map([['/repo', 'workspace']])]]),
+    )
+    const byPath = new Map((group?.workspaces ?? []).map(workspace => [workspace.path, workspace]))
+    expect(byPath.get('/repo')?.title).toBe('workspace')
+    expect(byPath.get('/other')).not.toHaveProperty('title')
+  })
+})
+
 describe('buildTree workspace ids', () => {
   it('stamps the registered id and leaves unknown paths and the placeholder blank', () => {
     const rows = [row('s-repo', '/repo'), row('s-other', '/other'), row('s-none')]

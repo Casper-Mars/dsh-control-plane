@@ -421,6 +421,7 @@ export class ControlPlane extends TypertRemoteService {
     if (recover) this.connections.recover()
     const rows = new Map<string, readonly SessionRow[]>()
     const workspaceIds = new Map<string, ReadonlyMap<string, string>>()
+    const workspaceTitles = new Map<string, ReadonlyMap<string, string>>()
     await Promise.all(this.instances.map(async (instance) => {
       const upstream = this.connections.get(instance.id)
       if (upstream === undefined) return
@@ -441,11 +442,13 @@ export class ControlPlane extends TypertRemoteService {
         await upstream.awaitWorkspaceIds?.()
         const mapping = upstream.workspaceIdMap
         if (mapping !== undefined) workspaceIds.set(instance.id, mapping)
+        const titles = upstream.workspaceTitleMap
+        if (titles !== undefined) workspaceTitles.set(instance.id, titles)
       } catch {
         // No mapping: the rows stay and report no id, so no create control.
       }
     }))
-    return buildTree(this.instances, rows, this.states(), workspaceIds)
+    return buildTree(this.instances, rows, this.states(), workspaceIds, workspaceTitles)
   }
 
   /**
