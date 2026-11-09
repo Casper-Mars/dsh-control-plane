@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   InstanceGroups, type InstanceGroupView, type InstanceGroupsEvent, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
-import { en } from '../src/client/locales.ts'
+import { en } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
 
 const t = makeTranslate({ ...commonEn, ...en })
 

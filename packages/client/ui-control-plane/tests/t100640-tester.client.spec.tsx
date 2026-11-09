@@ -45,13 +45,13 @@ import {
   createClientTest, webApp, type TestClient,
 } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { resolveFederationTarget } from '@deepseek-ai/dsh-api-gateway'
-import type { SidebarRootComponentProps } from '../src/client/contract/slots.ts'
+import type { SidebarRootComponentProps } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/contract/slots.ts'
 import {
   InstanceGroups, type InstanceGroupView, type InstanceSessionView, type InstanceWorkspaceView,
 } from '../src/client/InstanceGroups.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { en } from '../src/client/locales.ts'
-import { SidebarRoot } from '../src/client/SidebarRoot.tsx'
+import { en } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
+import { SidebarRoot } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/SidebarRoot.tsx'
 import { ClientSessions } from '../../../api/session-controller/src/client/sessions/service.ts'
 import { err, sessionWorld } from '../../../api/session-controller/tests/remote/session.client.ts'
 
@@ -256,7 +256,7 @@ async function benchSidebar(sessions: { list: unknown; create?: unknown }) {
   ctx.provide('sessions', sessions as never)
   ctx.provide('locale', new LocaleRuntime(ctx))
   const slots = ctx.get('slots') as SlotRegistry
-  slots.register({ name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } }, SidebarFrame)
+  slots.register({ name: 'root', children: { sidebar: { kind: 'single', scope: 'root' }, 'sidebar.instances': { kind: 'single', scope: 'root' } } }, SidebarFrame)
   return { ctx, slots }
 }
 
@@ -699,7 +699,7 @@ describe('5. failure UX', () => {
 
 describe('6. keyboard and accessibility', () => {
   const css = readFileSync(
-    resolve(process.cwd(), 'packages/client/ui-sidebar/src/client/InstanceGroups.module.css'), 'utf8',
+    resolve(process.cwd(), 'packages/client/ui-control-plane/src/client/InstanceGroups.module.css'), 'utf8',
   ).replace(/\/\*[\s\S]*?\*\//g, ' ')
   const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/
 

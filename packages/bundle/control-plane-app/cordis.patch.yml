@@ -263,6 +263,10 @@
     - id: ui-sidebar
       name: '@deepseek-ai/dsh-client-ui-sidebar'
 
+    # Control-plane instance section: one tree over federated session keys.
+    - id: ui-control-plane
+      name: '@deepseek-ai/dsh-client-ui-control-plane'
+
     # The right Sidebar: one docking surface per session over ui-dockkit.
     - id: ui-sidebar-right
       name: '@deepseek-ai/dsh-client-ui-sidebar-right'

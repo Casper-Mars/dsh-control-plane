@@ -29,7 +29,7 @@ import {
   type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { de, en, es, fr, ja, pt, ru, zh } from '../src/client/locales.ts'
+import { de, en, es, fr, ja, pt, ru, zh } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
 
 const t = makeTranslate({ ...commonEn, ...en })
 
@@ -342,7 +342,7 @@ describe('P5 plain dsh (no control plane)', () => {
     ctx.provide('locale', new LocaleRuntime(ctx))
     const slots = ctx.get('slots') as SlotRegistry
     slots.register(
-      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } },
+      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' }, 'sidebar.instances': { kind: 'single', scope: 'root' } } },
       SidebarFrame,
     )
     return { ctx, slots }
@@ -474,7 +474,7 @@ describe('P7 style and token contract', () => {
   // jsdom's import.meta.url is an http URL, so anchor on the repo root instead.
   const repo = process.cwd()
   const cssSource = readFileSync(
-    resolve(repo, 'packages/client/ui-sidebar/src/client/InstanceGroups.module.css'), 'utf8',
+    resolve(repo, 'packages/client/ui-control-plane/src/client/InstanceGroups.module.css'), 'utf8',
   )
   const themeSource = readFileSync(
     resolve(repo, 'packages/client/ui-theme/src/styles/design-platform.css'), 'utf8',

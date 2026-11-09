@@ -21,7 +21,7 @@ import {
   InstanceGroups,
   type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
-import { en, zh } from '../src/client/locales.ts'
+import { en, zh } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
 
 const t = makeTranslate({ ...commonEn, ...en })
 

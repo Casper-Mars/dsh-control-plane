@@ -31,7 +31,7 @@ import {
   InstanceGroups, instanceGroupsSlot, type InstanceGroupView, type InstanceSessionView,
 } from '../src/client/InstanceGroups.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { en } from '../src/client/locales.ts'
+import { en } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
 
 const t = makeTranslate({ ...commonEn, ...en })
 const owners = new Set<Fiber>()
@@ -336,7 +336,7 @@ describe('t100635 / regression: rail and plain dsh', () => {
     ctx.provide('locale', new LocaleRuntime(ctx))
     const slots = ctx.get('slots') as SlotRegistry
     slots.register(
-      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } },
+      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' }, 'sidebar.instances': { kind: 'single', scope: 'root' } } },
       ({ renderSlot }: PropsRenderSlots<'sidebar'>) => renderSlot('sidebar', { collapsed: false, width: 300, drawer: false }),
     )
     const sidebar = ctx.plugin({ inject: [...inject], apply })
@@ -374,7 +374,7 @@ describe('t100635 / regression: rail and plain dsh', () => {
     ctx.provide('locale', new LocaleRuntime(ctx))
     const slots = ctx.get('slots') as SlotRegistry
     slots.register(
-      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } },
+      { name: 'root', children: { sidebar: { kind: 'single', scope: 'root' }, 'sidebar.instances': { kind: 'single', scope: 'root' } } },
       ({ renderSlot }: PropsRenderSlots<'sidebar'>) => renderSlot('sidebar', { collapsed: false, width: 300, drawer: false }),
     )
     const tree = vi.fn(async () => ({ ok: true as const, value: [group('ver-wire', 1)] }))

@@ -22,13 +22,13 @@ import type { GlobalStandardProps, PropsRenderSlots } from '@deepseek-ai/dsh-cli
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
-import type { SidebarRootComponentProps } from '../src/client/contract/slots.ts'
+import type { SidebarRootComponentProps } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/contract/slots.ts'
 import {
   InstanceGroups, type InstanceGroupView, type InstanceSessionView, type InstanceWorkspaceView,
 } from '../src/client/InstanceGroups.tsx'
 import { apply, inject } from '../src/client/index.ts'
-import { de, en, es, fr, ja, pt, ru, zh } from '../src/client/locales.ts'
-import { SidebarRoot } from '../src/client/SidebarRoot.tsx'
+import { de, en, es, fr, ja, pt, ru, zh } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/locales.ts'
+import { SidebarRoot } from '@deepseek-ai/dsh-client-ui-sidebar/src/client/SidebarRoot.tsx'
 
 const t = makeTranslate({ ...commonEn, ...en })
 const owners = new Set<Fiber>()
@@ -325,7 +325,7 @@ describe('workspace create entry', () => {
 describe('workspace row reveal', () => {
   // jsdom's import.meta.url is an http URL, so anchor on the repo root instead.
   const css = readFileSync(
-    resolve(process.cwd(), 'packages/client/ui-sidebar/src/client/InstanceGroups.module.css'), 'utf8',
+    resolve(process.cwd(), 'packages/client/ui-control-plane/src/client/InstanceGroups.module.css'), 'utf8',
   ).replace(/\/\*[\s\S]*?\*\//g, ' ')
   const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/
 
@@ -371,7 +371,7 @@ async function bench(sessions: { list: unknown; create?: unknown }) {
   ctx.provide('sessions', sessions as never)
   ctx.provide('locale', new LocaleRuntime(ctx))
   const slots = ctx.get('slots') as SlotRegistry
-  slots.register({ name: 'root', children: { sidebar: { kind: 'single', scope: 'root' } } }, SidebarFrame)
+  slots.register({ name: 'root', children: { sidebar: { kind: 'single', scope: 'root' }, 'sidebar.instances': { kind: 'single', scope: 'root' } } }, SidebarFrame)
   return { ctx, slots }
 }
 
