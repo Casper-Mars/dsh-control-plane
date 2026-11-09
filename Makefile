@@ -17,7 +17,7 @@ help:
 	@echo "the Web commands accept dsh web flags, the Desktop launcher accepts none."
 	@echo "make local       起 Web UI（隔离 DSH_HOME=./.devhome，默认端口 3099）"
 	@echo "PORT=3098 make local  换端口"
-	@echo "make control-plane  起控制面 Host（bundle + 实例叠加层）"
+	@echo "make control-plane  起控制面 Host（dsh-control-plane-app + --config）"
 
 build:
 	$(PNPM) run build
@@ -45,6 +45,6 @@ DSH_HOME_DIR := $(CURDIR)/.devhome
 local:
 	DSH_HOME=$(DSH_HOME_DIR) $(PNPM) dsh --profile web --no-open --port $(PORT)
 
-# 控制面开发态：装 bundle + 生成 instances 叠加层 + 起服务
+# 控制面开发态：固定 app bundle + 构建 + 用 --config 起服务
 control-plane:
 	./scripts/control-plane-dev.sh
