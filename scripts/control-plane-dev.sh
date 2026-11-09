@@ -2,12 +2,15 @@
 # 起一个「控制面」Host（开发态）：
 #   1. 把控制面 bundle（就是插件包本身）通过官方 `dsh plugin add` 装进隔离 profile
 #   2. 用 instances 配置生成一份 --patch 覆盖，不动 profile 的 cordis.patch.yml
-#   3. 起 dsh web
+#   3. 默认构建 control-plane Host 与 ui-sidebar client bundle，避免启动时加载旧 bundle
+#      （两次独立的 pnpm run bundle，不能用多 --filter 合并，会触发 workspace 任务环）
+#   4. 起 dsh web
 #
 # 用法：
 #   ./scripts/control-plane-dev.sh                 # 默认端口 3095
 #   PORT=3100 ./scripts/control-plane-dev.sh
 #   INSTANCES_FILE=my.json ./scripts/control-plane-dev.sh
+#   SKIP_BUILD=1 ./scripts/control-plane-dev.sh    # 跳过构建，直接使用现有 bundle 产物
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,6 +53,25 @@ const rows = (config.instances ?? []).map((instance) => {
 writeFileSync(output, `- id: control-plane\n  config:\n    instances:\n${rows.join('\n')}\n`)
 NODE
 
-# 3) 起服务
+# 3) 默认构建 control-plane Host 与 ui-sidebar client bundle
+#    必须是两次独立的 pnpm 调用：合并成一条多 --filter 命令会触发 workspace 任务环
+#    （control-plane#bundle ↔ ui-sidebar#bundle）。SKIP_BUILD=1 可跳过构建。
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+  echo "跳过构建（SKIP_BUILD=1），直接使用现有 bundle 产物"
+else
+  echo "构建 control-plane Host 与 ui-sidebar client bundle ..."
+  BUILD_STARTED=$SECONDS
+  if ! pnpm --filter @deepseek-ai/dsh-control-plane run bundle; then
+    echo "构建失败：@deepseek-ai/dsh-control-plane bundle" >&2
+    exit 1
+  fi
+  if ! pnpm --filter @deepseek-ai/dsh-client-ui-sidebar run bundle; then
+    echo "构建失败：@deepseek-ai/dsh-client-ui-sidebar bundle" >&2
+    exit 1
+  fi
+  echo "构建完成，耗时 $((SECONDS - BUILD_STARTED))s"
+fi
+
+# 4) 起服务
 echo "控制面：http://127.0.0.1:$PORT/  （实例：$(node -e "const c=require('$INSTANCES_FILE');console.log(c.instances.map(i=>i.id).join(', '))")）"
 exec pnpm dsh --profile web --patch "$PATCH" --no-open --port "$PORT"
