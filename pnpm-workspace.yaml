@@ -7,12 +7,6 @@ packages:
   - native/system/packages/*
   # Product assemblies over the package tier; apps/cli owns the `dsh` bin.
   - apps/*
-  # Private package owning repository-level benchmark dependencies.
-  - benchmarks
-  - website
-  # Deploy root of the single-exe build: a pure dependency manifest whose
-  # closure is what the exe bundles and what the Python runtime distributes.
-  - python/sdk-runtime
 
 overrides:
   'extract-zip>yauzl': '3.4.0'
@@ -110,11 +104,9 @@ minimumReleaseAgeExclude:
 patchedDependencies:
   '@botiverse/oar@0.67.0': patches/@botiverse__oar@0.67.0.patch
   '@earendil-works/pi-ai@1.3.0': patches/@earendil-works__pi-ai@1.3.0.patch
-  '@electron/osx-sign@1.3.3': patches/@electron__osx-sign@1.3.3.patch
   '@fortune-sheet/core@1.0.4': patches/@fortune-sheet__core@1.0.4.patch
   '@fortune-sheet/react@1.0.4': patches/@fortune-sheet__react@1.0.4.patch
   '@yao-pkg/pkg@6.21.0': patches/@yao-pkg__pkg@6.21.0.patch
-  app-builder-lib@26.17.0: patches/app-builder-lib@26.17.0.patch
   exceljs@4.4.0: patches/exceljs@4.4.0.patch
   lexical@0.49.0: patches/lexical@0.49.0.patch
   mdast-util-gfm-autolink-literal@2.0.1: patches/mdast-util-gfm-autolink-literal@2.0.1.patch

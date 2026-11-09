@@ -27,7 +27,7 @@
       "path": "../../session/session-projection"
     },
     {
-      "path": "../../bundle/web-app"
+      "path": "../../bundle/control-plane-app"
     }
   ]
 }

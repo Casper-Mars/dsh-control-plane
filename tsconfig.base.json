@@ -226,7 +226,6 @@
       "@deepseek-ai/dsh-user-questions/types": ["./packages/interaction/user-questions/src/types.ts"],
       "@deepseek-ai/dsh-agent/types": ["./packages/core/agent/src/types.ts"],
       "@deepseek-ai/dsh-agent/brand": ["./packages/core/agent/src/brand.ts"],
-      "@deepseek-ai/dsh-headless/startup": ["./packages/bundle/headless/src/startup.ts"],
       "dsh-control-plane-app/startup": ["./packages/bundle/control-plane-app/src/startup.ts"],
       "@deepseek-ai/dsh-client-*/client": ["./packages/client/*/src/client"],
       // One wildcard maps every @deepseek-ai/dsh-<name> to its source. Package
@@ -416,7 +415,6 @@
       "@deepseek-ai/dsh-ptc-runtime-node/configuration": ["./packages/ptc-runtime/ptc-runtime-node/src/configuration.ts"],
       // BEGIN generated package aliases — pnpm run gen-tsconfig-paths
       "@deepseek-ai/dsh-acp": ["./packages/acp/acp/src"],
-      "@deepseek-ai/dsh-acp-app": ["./packages/bundle/acp-app/src"],
       "@deepseek-ai/dsh-agent": ["./packages/core/agent/src"],
       "@deepseek-ai/dsh-agent-default-model": ["./packages/core/agent-default-model/src"],
       "@deepseek-ai/dsh-agent-instructions": ["./packages/context/agent-instructions/src"],
@@ -463,7 +461,6 @@
       "@deepseek-ai/dsh-goal": ["./packages/goal/goal/src"],
       "@deepseek-ai/dsh-goal-round-driver": ["./packages/goal/goal-round-driver/src"],
       "@deepseek-ai/dsh-harness-dev-context": ["./packages/context/harness-dev-context/src"],
-      "@deepseek-ai/dsh-headless": ["./packages/bundle/headless/src"],
       "@deepseek-ai/dsh-home-paths": ["./packages/util/home-paths/src"],
       "@deepseek-ai/dsh-hook-protocol": ["./packages/experimental/hook-protocol/src"],
       "@deepseek-ai/dsh-hooks-claude-code": ["./packages/experimental/hooks-claude-code/src"],
@@ -514,8 +511,6 @@
       "@deepseek-ai/dsh-sandbox-windows-acl": ["./packages/sandbox/sandbox-windows-acl/src"],
       "@deepseek-ai/dsh-schedule": ["./packages/schedule/schedule/src"],
       "@deepseek-ai/dsh-scope": ["./packages/core/scope/src"],
-      "@deepseek-ai/dsh-sdk-app": ["./packages/bundle/sdk-app/src"],
-      "@deepseek-ai/dsh-sdk-minimal": ["./packages/bundle/sdk-minimal/src"],
       "@deepseek-ai/dsh-session": ["./packages/core/session/src"],
       "@deepseek-ai/dsh-session-checkpoint-policy": ["./packages/session/session-checkpoint-policy/src"],
       "@deepseek-ai/dsh-session-format": ["./packages/session/session-format/src"],

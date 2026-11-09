@@ -14,24 +14,12 @@
     "types": ["node"]
   },
   "include": [
-    // The native/renderer keyboard fixture imports only these Cordis-free Desktop modules.
-    "apps/desktop/tests/keyboard.spec.ts",
-    "apps/desktop/src/keyboard.ts",
-    "apps/desktop/src/keybindings.ts",
-    "apps/desktop/src/browser-guests.ts",
-    "apps/desktop/src/ipc.ts",
-    "apps/desktop/src/update-overlay.ts",
-    "apps/desktop/src/windows-layout.ts",
-    "apps/desktop/tests/**/*.client.spec.tsx",
     // Source-subpath test imports can arrive through workspace links whose
     // realpath semantics vary by host. Load package CSS declarations directly.
     "packages/client/*/src/css-modules.d.ts",
     "packages/experimental/*/src/css-modules.d.ts",
     "packages/client/*/tests/**/*.ts",
     "packages/client/*/tests/**/*.tsx",
-    "benchmarks/**/*.client.ts",
-    "benchmarks/**/*.client.tsx",
-    "benchmarks/support/**/*.ts",
     "packages/*/*/tests/**/*.client.spec.ts",
     "packages/*/*/tests/**/*.client.spec.tsx",
     "packages/*/*/tests/**/*.client.tsx",

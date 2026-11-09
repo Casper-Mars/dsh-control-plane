@@ -541,7 +541,7 @@ describe('P7 style and token contract', () => {
   })
 
   it('the shipped bundle carries the same literal-free instance-groups CSS', () => {
-    const bundle = readFileSync(resolve(repo, 'packages/client/ui-sidebar/lib/client.js'), 'utf8')
+    const bundle = readFileSync(resolve(repo, 'packages/client/ui-control-plane/lib/client.js'), 'utf8')
     const chunks = [...bundle.matchAll(/const css\w* = "((?:[^"\\]|\\.)*)"/g)]
       .map(m => (m[1] as string).replace(/\\"/g, '"').replace(/\\\\/g, '\\'))
     const chunk = chunks.find(text => text.includes('groupHeader') && text.includes('dsh-workspace-indent'))

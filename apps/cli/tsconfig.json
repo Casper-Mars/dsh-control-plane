@@ -30,9 +30,6 @@
       "path": "../../packages/bundle/base"
     },
     {
-      "path": "../../packages/bundle/headless"
-    },
-    {
       "path": "../../packages/bundle/control-plane-app"
     },
     {
