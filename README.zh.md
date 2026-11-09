@@ -41,13 +41,15 @@ Browser ── /api ──> Gateway ── local ──────────�
 
 开发说明和 demo 脚本见 `packages/control/control-plane/README.md`。
 
-```yaml
-- id: control-plane
-  name: '@deepseek-ai/dsh-control-plane'
-  config:
-    instances:
-      - { id: cto, name: CTO Agent, host: 127.0.0.1, port: 8090 }
-      - { id: dev, name: Dev Agent, host: 127.0.0.1, port: 8091 }
+```json
+{ "instances": [
+  { "id": "cto", "name": "CTO Agent", "host": "127.0.0.1", "port": 8090 },
+  { "id": "dev", "name": "Dev Agent", "host": "127.0.0.1", "port": 8091 }
+] }
+```
+
+```bash
+dsh web --config ./control-plane.json
 ```
 
 <a id="repository-layout"></a>
@@ -55,11 +57,11 @@ Browser ── /api ──> Gateway ── local ──────────�
 ## 仓库结构
 
 ```text
-packages/control/control-plane/   control-plane host plugin
-packages/api/gateway/             gateway and federation routing
-packages/api/session-controller/  session model and federated client keys
-packages/client/ui-sidebar/       instance tree
-packages/client/ui-conversation/  conversation shell
+packages/bundle/control-plane-app/  the browser surface (default web profile)
+packages/control/control-plane/     control-plane host plugin
+packages/client/ui-control-plane/   sidebar instance tree
+packages/api/gateway/               gateway and federation routing
+packages/api/session-controller/    session model and federated client keys
 ```
 
 <a id="documentation"></a>
