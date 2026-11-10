@@ -815,6 +815,11 @@ describe('subagent catalogs', () => {
       ],
     })
 
+    // The catalog is qualified on ingest, so the UI's catalog keys and the
+    // Session store's keys stay in one space (that is what decides whether a
+    // row offers an expander).
+    expect(manager.getListSnapshot().projectionsBySession[parent]?.values.subagentCatalog?.[0]?.id)
+      .toBe('alpha:' + S2)
     expect(manager.subagentAddress(S2)).toEqual({
       parentSessionId: parent, childSessionId: 'alpha:' + S2, mode: 'continuable',
     })

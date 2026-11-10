@@ -522,6 +522,23 @@ function CatalogDropdown(props: CatalogDropdownProps) {
   }, [projections, summaries, statuses])
   const catalog = catalogs[rootSessionId]
   const [open, setOpen] = useState(false)
+  // A federated catalog names children by owner-local ids, and this Client has
+  // no list row that would have carried their projection blocks. Their own
+  // catalogs are therefore unknown, which makes every row draw an expander.
+  // Read each direct child once while the menu is open so leaf rows stop
+  // offering a disclosure that would open nothing.
+  useEffect(() => {
+    // Ledger keys are `<instanceId>:<sessionId>`; only those need this walk,
+    // and detecting the shape here keeps the client bundle free of a
+    // cross-plugin value import.
+    if (!open || !rootSessionId.includes(':')) return
+    if (catalog === undefined || catalog.state !== 'ready') return
+    for (const entry of catalog.entries) {
+      if (entry.mode === 'external') continue
+      if (catalogs[entry.id]?.state === 'ready') continue
+      refreshProjection(entry.id)
+    }
+  }, [open, catalog, catalogs, refreshProjection])
   const [expanded, setExpanded] = useState<ReadonlySet<SessionId>>(() => new Set())
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)

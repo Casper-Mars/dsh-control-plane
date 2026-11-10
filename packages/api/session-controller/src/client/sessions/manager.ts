@@ -28,6 +28,12 @@ import type { SessionRemotes } from './remotes.ts'
 import type { SessionTarget } from '../contract/sessions.ts'
 import { isFederatedSessionId, qualifyFederatedSessionId } from '../federation.ts'
 
+/** The owner-local part of a possibly federated id. */
+function localIdPart(id: string): string {
+  const separator = id.indexOf(':')
+  return separator > 0 ? id.slice(separator + 1) : id
+}
+
 function sessionSeqCursor(value: number): SessionSeqCursor {
   return value === -1 ? -1 : SessionSeq(value)
 }
@@ -186,9 +192,9 @@ export class SessionManager {
     const retained = this.addresses.get(sessionId)
     if (retained !== undefined) return retained
     for (const parentSessionId of this.projectionStores.keys()) {
+      const wanted = localIdPart(sessionId)
       const child = this.projectionStores.get(parentSessionId)?.values().subagentCatalog
-        ?.find(entry => entry.id === sessionId
-          || qualifyFederatedSessionId(parentSessionId, entry.id) === sessionId)
+        ?.find(entry => entry.id === sessionId || localIdPart(entry.id) === wanted)
       if (child !== undefined && child.mode !== 'external') {
         return {
           parentSessionId,
@@ -361,9 +367,11 @@ export class SessionManager {
   /**
    * Read projections without starting migration; retry failed or migration-deferred reads.
    * @param sessionId - Session to inspect without opening its conversation.
+   * @param options - `prefetchChildren: false` stops the one-level catalog walk
+   *   this read would otherwise start (used by that walk itself).
    * @returns completion of the current or newly started read.
    */
-  refreshProjections(sessionId: SessionId): Promise<void> {
+  refreshProjections(sessionId: SessionId, options: { readonly prefetchChildren?: boolean } = {}): Promise<void> {
     const existing = this.projectionInflight.get(sessionId)
     if (existing !== undefined) return existing.promise
     if (this.projectionLoads.get(sessionId)?.state === 'ready') return Promise.resolve()
@@ -381,7 +389,10 @@ export class SessionManager {
           if (value !== null) {
             switch (value.kind) {
               case 'sequenced':
-                store.seed({ values: value.values, asOfSeq: sessionSeqCursor(value.asOfSeq) })
+                store.seed({
+                  values: this.qualifyCatalogValues(sessionId, value.values),
+                  asOfSeq: sessionSeqCursor(value.asOfSeq),
+                })
                 break
               case 'migration-required':
                 store.applyCached(value.values)
@@ -397,6 +408,7 @@ export class SessionManager {
             state: value?.kind === 'migration-required' ? 'migration-required' : 'ready',
             error: null,
           })
+          if (options.prefetchChildren !== false) this.prefetchChildCatalogs(sessionId)
         } else {
           this.projectionLoads.set(sessionId, { state: 'error', error: result.error })
         }
@@ -413,6 +425,63 @@ export class SessionManager {
     })()
     this.projectionInflight.set(sessionId, { promise: operation, controller })
     return operation
+  }
+
+  /**
+   * Rewrite one projection value whose ids the owner reported bare.
+   *
+   * A federated parent's `subagentCatalog` names children by owner-local id;
+   * every follow-up RPC (projection reads included) must carry the instance
+   * prefix. Qualifying on ingest keeps the UI's catalog keys and the Session
+   * store's keys in one space.
+   * @param sessionId - Session that owns the projection.
+   * @param key - Projection key being applied.
+   * @param value - Raw projection value.
+   * @returns the value with qualified child ids, or the input untouched.
+   */
+  private qualifyCatalog(sessionId: SessionId, key: string, value: unknown): unknown {
+    if (key !== 'subagentCatalog' || !Array.isArray(value)) return value
+    return this.qualifyCatalogEntries(sessionId, value)
+  }
+
+  /** Qualify a whole projection-value map for a federated Session. */
+  private qualifyCatalogValues(
+    sessionId: SessionId,
+    values: Readonly<Record<string, unknown>>,
+  ): Readonly<Record<string, unknown>> {
+    const catalog = values.subagentCatalog
+    if (!Array.isArray(catalog)) return values
+    return { ...values, subagentCatalog: this.qualifyCatalogEntries(sessionId, catalog) }
+  }
+
+  private qualifyCatalogEntries(sessionId: SessionId, entries: readonly unknown[]): readonly unknown[] {
+    if (!isFederatedSessionId(sessionId)) return entries
+    return entries.map((entry) => {
+      if (entry === null || typeof entry !== 'object' || !('id' in entry)) return entry
+      const id = (entry as { readonly id: unknown }).id
+      if (typeof id !== 'string') return entry
+      return { ...entry, id: qualifyFederatedSessionId(sessionId, id) }
+    })
+  }
+
+  /**
+   * Learn whether a federated catalog's direct children are leaves.
+   *
+   * The official Workspace browser gets every Session's projection block from
+   * one local `session/list`, so a row knows whether to draw an expander. A
+   * federated parent has no such list here; read the direct children once, so
+   * leaf rows stop offering an expander that would open nothing. One level
+   * only: deeper rows are read when the user expands them.
+   */
+  private prefetchChildCatalogs(sessionId: SessionId): void {
+    if (!isFederatedSessionId(sessionId)) return
+    const catalog = this.projectionStores.get(sessionId)?.values().subagentCatalog
+    if (!Array.isArray(catalog)) return
+    for (const entry of catalog) {
+      if (entry.mode === 'external') continue
+      if (this.projectionLoads.get(entry.id)?.state === 'ready') continue
+      void this.refreshProjections(entry.id, { prefetchChildren: false }).catch(() => {})
+    }
   }
 
   // ---- List API ----
@@ -683,16 +752,19 @@ export class SessionManager {
     }
     const store = this.projectionStore(frame.sessionId)
     const seq = SessionSeq(frame.seq)
-    for (const change of frame.changes) store.apply(change.key, change.val, seq)
+    for (const change of frame.changes) {
+      store.apply(change.key, this.qualifyCatalog(frame.sessionId as SessionId, change.key, change.val), seq)
+    }
     this.notifier.markDirty()
   }
 
   private replaceControlBaseline(baseline: SessionControlBaseline): void {
 
-    for (const [sessionId, block] of Object.entries(baseline.projections)) {
-      const store = this.projectionStore(sessionId as SessionId)
+    for (const [rawId, block] of Object.entries(baseline.projections)) {
+      const id = rawId as SessionId
+      const store = this.projectionStore(id)
       const asOfSeq = sessionSeqCursor(block.asOfSeq)
-      store.seed({ ...block, asOfSeq })
+      store.seed({ ...block, values: this.qualifyCatalogValues(id, block.values), asOfSeq })
     }
     this.notifier.markDirty()
   }
