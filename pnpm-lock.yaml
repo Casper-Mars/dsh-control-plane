@@ -2363,6 +2363,9 @@ importers:
       '@deepseek-ai/dsh-client-shortcuts':
         specifier: workspace:*
         version: link:../../client/shortcuts
+      '@deepseek-ai/dsh-client-ui-agent-preset':
+        specifier: workspace:*
+        version: link:../../client/ui-agent-preset
       '@deepseek-ai/dsh-client-ui-agent-team':
         specifier: workspace:*
         version: link:../../client/ui-agent-team

@@ -805,6 +805,23 @@ describe('subagent catalogs', () => {
     expect(remote.session.projections).not.toHaveBeenCalled()
   })
 
+  it('qualifies a catalog child with the parent instance for federated navigation', ({ mock, remote }) => {
+    const manager = makeManager(mock, remote)
+    onTestFinished(() => manager.dispose())
+    const parent = 'alpha:parent-1' as SessionId
+    manager.handleControlFrame({
+      type: 'projection', sessionId: parent, seq: 0, changes: [
+        { key: 'subagentCatalog', val: [{ id: S2, createdAt: 1, mode: 'continuable', label: 'worker' }] },
+      ],
+    })
+
+    expect(manager.subagentAddress(S2)).toEqual({
+      parentSessionId: parent, childSessionId: 'alpha:' + S2, mode: 'continuable',
+    })
+    expect(manager.resolveTarget({ parentSessionId: parent, childSessionId: S2, mode: 'continuable' }))
+      .toBe('alpha:' + S2)
+  })
+
   it('retains a header-discovered ancestor through subagent follow without discovery reads', async ({ mock, remote, start }) => {
     const grandchild = 'header-grandchild' as SessionId
     const descendantAddress: SubagentAddress = {

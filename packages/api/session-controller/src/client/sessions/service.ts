@@ -246,6 +246,11 @@ class ClientSessionReference implements SessionReference {
     this.release()
   }
 }
+/** The owner-local part of a federated key, used as the display fallback. */
+function localTitleOf(id: SessionId): string {
+  const separator = id.indexOf(':')
+  return separator > 0 ? id.slice(separator + 1) : id
+}
 
 /** Host catalog and local reference allocator; view selection remains outside the Controller. */
 export class ClientSessions implements ISessions {
@@ -273,6 +278,16 @@ export class ClientSessions implements ISessions {
    * carries no Workspace authority and must not erase the main view's path.
    */
   private readonly federatedCwdHintOwners = new Map<SessionId, SessionReferenceSource>()
+  /**
+   * Display titles last published for each identity.
+   *
+   * The Conversation header derives a subagent breadcrumb from `byId` rows, so
+   * a child needs its parent row even after that parent is no longer open. A
+   * federated parent has no local catalog row, so once its scope is released
+   * the row vanishes; this cache keeps the title the breadcrumb should show
+   * instead of the raw key. Local ids never need it (their catalog owns them).
+   */
+  private readonly publishedTitles = new Map<SessionId, string>()
   /** Stable per-id sources retained for the Client root lifetime, including across generation replacement. */
   private readonly retainObservers = new Map<SessionId, RetentionObserver>()
   private readonly scopeDrops = new Set<Promise<void>>()
@@ -298,6 +313,7 @@ export class ClientSessions implements ISessions {
       this.scopes.clear()
       this.federatedCwdHints.clear()
       this.federatedCwdHintOwners.clear()
+      this.publishedTitles.clear()
       for (const [, record] of scopes) {
         record.live = false
         record.session.unbindScope()
@@ -771,6 +787,29 @@ export class ClientSessions implements ISessions {
       // `previous` must not resurrect a path this open cleared.
       if (federated && cwdHint === undefined) delete row.cwd
       byId[id] = row
+      if (row.displayTitle !== id) this.publishedTitles.set(id, row.displayTitle)
+    }
+    // A federated subagent child addresses its parent by key, but the parent's
+    // own scope is released the moment the child takes the main view. Publish a
+    // breadcrumb-only ancestor row so the header can still render (and open) the
+    // parent; the local catalog never names that key, so nothing else would.
+    for (const id of this.scopes.keys()) {
+      const address = this.manager.subagentAddress(id)
+      if (address === undefined) continue
+      const parent = address.parentSessionId
+      if (byId[parent] !== undefined) continue
+      const projectedParentTitle = this.manager.projectionValues(parent)?.title
+      const parentTitle = typeof projectedParentTitle === 'string' && projectedParentTitle !== ''
+        ? projectedParentTitle
+        : undefined
+      byId[parent] = {
+        id: parent,
+        displayTitle: parentTitle ?? this.publishedTitles.get(parent) ?? localTitleOf(parent),
+        updatedAt: 0,
+        running: false,
+        blank: false,
+        retainedBy: this.retentionSnapshot(parent).retainedBy,
+      }
     }
     this.list.set({ ids, byId, phase, projectionsBySession })
   }

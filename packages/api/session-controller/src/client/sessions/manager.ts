@@ -145,8 +145,19 @@ export class SessionManager {
    * @returns the resolved identity with its explicit or catalog-derived history route installed.
    */
   resolveTarget(target: SessionTarget): SessionId {
-    const id = typeof target === 'string' ? target : target.childSessionId
-    const address = typeof target === 'string' ? this.subagentAddress(id) : target
+    // A catalog child carries its owner's bare id even when the parent is a
+    // federated key: the instance reports ids it knows, not this Client's
+    // routing prefixes. A child always lives on its parent's instance, so a
+    // federated parent qualifies the child before any RPC is sent — otherwise
+    // the Gateway would resolve the bare id against this Client's own Host.
+    const id: SessionId = typeof target === 'string'
+      ? target
+      : qualifyFederatedSessionId(target.parentSessionId, target.childSessionId) as SessionId
+    const address = typeof target === 'string'
+      ? this.subagentAddress(id)
+      // Keep the caller's object identity while the id needs no qualification:
+      // retained-address lookups compare by reference.
+      : id === target.childSessionId ? target : { ...target, childSessionId: id }
     if (typeof target === 'string'
       && !this.sessions.has(id)
       && !this.summaries.some(summary => summary.sessionId === id)
@@ -156,6 +167,12 @@ export class SessionManager {
     }
     if (address !== undefined) this.addresses.set(id, address)
     this.sessions.get(id)?.configureSubagent(address)
+    // A federated parent contributes the breadcrumb title, but its row is not
+    // in this Client's catalog and its scope is usually released. Read its
+    // projections once so the ancestry row can name it instead of the raw key.
+    if (address !== undefined && isFederatedSessionId(address.parentSessionId)) {
+      void this.refreshProjections(address.parentSessionId).catch(() => {})
+    }
     return id
   }
 
@@ -170,11 +187,12 @@ export class SessionManager {
     if (retained !== undefined) return retained
     for (const parentSessionId of this.projectionStores.keys()) {
       const child = this.projectionStores.get(parentSessionId)?.values().subagentCatalog
-        ?.find(entry => entry.id === sessionId)
+        ?.find(entry => entry.id === sessionId
+          || qualifyFederatedSessionId(parentSessionId, entry.id) === sessionId)
       if (child !== undefined && child.mode !== 'external') {
         return {
           parentSessionId,
-          childSessionId: sessionId,
+          childSessionId: qualifyFederatedSessionId(parentSessionId, child.id) as SessionId,
           mode: child.mode,
         }
       }

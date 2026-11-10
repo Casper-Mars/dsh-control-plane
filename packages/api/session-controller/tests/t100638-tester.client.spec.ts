@@ -311,6 +311,24 @@ describe('list projection stays clean', () => {
     expect(b.svc.list.getSnapshot().ids).toEqual([])
   })
 
+  it('publishes a breadcrumb-only parent row for a federated subagent address', async ({ mock, start }) => {
+    const b = await bench(mock, start)
+    const parent = sid('alpha:p-1')
+    const reference = b.svc.retain(
+      { parentSessionId: parent, childSessionId: sid('c-1'), mode: 'continuable' },
+      { source: 'mainView' },
+    )
+    onTestFinished(() => { reference.release() })
+    await reference.ready
+
+    const state = b.svc.list.getSnapshot()
+    // The child is addressed through its parent's instance, and the parent's
+    // own scope is gone, so the header still needs a row to draw the crumb.
+    expect(reference.sessionId).toBe('alpha:c-1')
+    expect(state.byId[sid('alpha:c-1')]?.parentId).toBe(parent)
+    expect(state.byId[parent]?.displayTitle).toBe('p-1')
+  })
+
   it('leaves a real local blank row reusable beside a federated identity', async ({ mock, start }) => {
     const b = await bench(mock, start)
     mock.load({

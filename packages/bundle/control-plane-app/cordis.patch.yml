@@ -355,6 +355,11 @@
     - id: ui-skill
       name: '@deepseek-ai/dsh-client-ui-skill'
 
+    # Read-only agent-preset name in the Session header; the same package also
+    # owns the new-session chip and the preset roster in Settings.
+    - id: ui-agent-preset
+      name: '@deepseek-ai/dsh-client-ui-agent-preset'
+
     - id: ui-agent-team
       name: '@deepseek-ai/dsh-client-ui-agent-team'
 
