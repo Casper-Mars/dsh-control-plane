@@ -557,6 +557,8 @@ export interface RawSummary {
   readonly updatedAt?: unknown
   readonly running?: unknown
   readonly agentAvailable?: unknown
+  /** `subagent` for a child Session; absent for an ordinary one. */
+  readonly origin?: unknown
   /** Summary projection block; only the `title` value is read here. */
   readonly projections?: {
     readonly values?: {
@@ -776,6 +778,7 @@ export function toSessionRow(
     updatedAt: Number(raw.updatedAt),
     running: raw.running === true,
     agentAvailable: raw.agentAvailable === true ? true : raw.agentAvailable === false ? false : undefined,
+    ...(raw.origin === 'subagent' ? { origin: 'subagent' as const } : {}),
     ...(title === undefined ? {} : { title }),
     ...(pinned.has(sessionId) ? { pinned: true } : {}),
     ...(archived.has(sessionId) ? { archived: true } : {}),

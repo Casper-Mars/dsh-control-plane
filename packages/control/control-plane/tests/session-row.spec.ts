@@ -58,4 +58,14 @@ describe('toSessionRow', () => {
     const row = toSessionRow(summary({ projections: { values: { title: 42 } } }))
     expect(row).not.toHaveProperty('title')
   })
+
+  it('carries the subagent origin the instance reported', () => {
+    expect(toSessionRow(summary({ origin: 'subagent' })).origin).toBe('subagent')
+  })
+
+  it('omits origin for an ordinary session or an unknown value', () => {
+    expect(toSessionRow(summary())).not.toHaveProperty('origin')
+    expect(toSessionRow(summary({ origin: 'primary' }))).not.toHaveProperty('origin')
+    expect(toSessionRow(summary({ origin: 1 }))).not.toHaveProperty('origin')
+  })
 })

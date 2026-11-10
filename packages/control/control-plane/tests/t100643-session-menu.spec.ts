@@ -52,6 +52,17 @@ describe('t100643 / toSessionRow owner facts', () => {
   })
 })
 
+describe('t100643 / buildTree visibility', () => {
+  it('drops subagent children, which the official browser reads through their parent', () => {
+    const [node] = buildTree(INSTANCES, new Map([['alpha', [
+      row({ sessionId: 'parent' }),
+      row({ sessionId: 'child', origin: 'subagent' }),
+    ]]]))
+    expect(node?.workspaces[0]?.sessions.map(session => session.sessionId)).toEqual(['parent'])
+    expect(node?.sessionCount).toBe(1)
+  })
+})
+
 describe('t100643 / applyWorkspaceFrame', () => {
   it('replaces both sets from a baseline and from a replace', () => {
     const archived = new Set(['old'])

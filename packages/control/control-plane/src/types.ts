@@ -32,6 +32,12 @@ export interface SessionRow {
   /** Whether this session currently owns a live agent. */
   readonly agentAvailable?: boolean | undefined
   /**
+   * Coarse durable origin the owning instance reported. A `subagent` child is
+   * addressed through its parent's header catalog and never appears as its own
+   * row, the same rule the official Workspace browser applies.
+   */
+  readonly origin?: 'subagent' | undefined
+  /**
    * The owning instance lists this Session in its Workspace pin set. Present
    * only when true: the field is a value the control plane learned from the
    * instance's `workspace/follow` baseline, and absence means "not pinned" (or

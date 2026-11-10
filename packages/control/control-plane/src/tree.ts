@@ -74,7 +74,12 @@ export function buildTree(
     // same rule the official Workspace browser applies. Their rows stay in the
     // owner's list (so an unarchive brings them back), but a sidebar that kept
     // them would contradict the menu it just ran.
-    const rows = all.filter(row => row.archived !== true)
+    //
+    // Subagent children are not rows of their own either: the official browser
+    // reads them through the parent Session's header catalog, and an ordinary
+    // `session/follow` on the child id is refused. Listing one here would show
+    // a row that cannot open, so they are filtered with the same rule.
+    const rows = all.filter(row => row.archived !== true && row.origin !== 'subagent')
     const reported: InstanceStateReport | undefined = states[instance.id]
     const state: UpstreamState = reported?.state ?? 'connected'
     const groups = new Map<string, SessionNode[]>()
