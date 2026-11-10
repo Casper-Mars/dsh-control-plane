@@ -16,6 +16,8 @@ help:
 	@echo "make local       起 Web UI（隔离 DSH_HOME=./.devhome，默认端口 3099）"
 	@echo "PORT=3098 make local  换端口"
 	@echo "make control-plane  起控制面 Host（dsh-control-plane-app + 测试配置）"
+	@echo "HOST=127.0.0.1 make control-plane  只绑回环；默认绑本机局域网 IP"
+	@echo "PORT=3100 make control-plane       换端口（默认 3095）"
 
 build:
 	$(PNPM) run build
