@@ -94,6 +94,15 @@ describe('InstanceGroups header', () => {
     const header = screen.getByRole('button', { name: 'CTO(cto), Connected, 3 sessions' })
     expect(header.getAttribute('data-instance-state')).toBe('connected')
     expect(container.querySelector('[data-state="done"]')).not.toBeNull()
+    // Hierarchy marks: each level is addressable, the instance dot no longer
+    // occupies the leading cell (it rides the trailing edge), and session rows
+    // carry no state dot at all.
+    expect(header.getAttribute('data-level')).toBe('instance')
+    expect(container.querySelectorAll('[data-level="instance"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-level="workspace"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-level="session"]')).toHaveLength(3)
+    expect(header.querySelector(':scope > [data-state]')).toBeNull()
+    expect(container.querySelectorAll('[data-level="session"] [data-state]')).toHaveLength(0)
     // The count rides the row's trailing edge; the label is the header's own text.
     expect(header.textContent).toBe('CTO(cto)3')
     expect(screen.getByText('/workspace')).toBeTruthy()

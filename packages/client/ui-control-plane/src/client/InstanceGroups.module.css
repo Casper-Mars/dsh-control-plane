@@ -8,14 +8,17 @@
      the panel rows above and the workspace browser of an ordinary dsh;
    - the design-token ink (`--dsw-alias-*`) and radii (`--dsw-radius-*`) that
      make light and dark themes identical to the official rows;
-   - 32px rows, 16px leading cells, 14px inherited titles, ellipsis, the
-     hover fill, and the folder → chevron swap.
+   - 32px rows (the instance header is 36px), 16px leading cells, 14px
+     inherited titles, ellipsis, the hover fill, and the folder → chevron swap.
 
    No color literals and no private type scale: nothing here sets 11px/12px, and
    every ink resolves through a token (see the theme package for the values).
 
-   One level of indentation: a session row sits 12px inside its workspace row,
-   the same `depth * 12` step the official tree uses. */
+   Hierarchy without a font-size step: the leading cell names the level (a
+   layers icon for an instance, a folder for a Workspace, nothing for a Session)
+   and the indent ladder is 0 / 12 / 24px — the official `depth * 12`. A 1px
+   rail at each parent's icon centre draws the nesting; reachability sits on the
+   instance row's trailing edge so it never reads as a level mark. */
 
 .root {
   display: flex;
@@ -27,14 +30,20 @@
    2px between the rows inside one group. One indent step inside the group:
    session rows sit 12px past their workspace row, the official `depth * 12`. */
 .group {
-  --dsh-workspace-indent: 12px;
+  /* Two indent steps, the official `depth * 12`: a Workspace sits one step in,
+     a Session two. The instance header owns the zero step. */
+  --cp-indent-workspace: 12px;
+  --cp-indent-session: 24px;
+  --dsh-workspace-indent: var(--cp-indent-workspace);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
+/* A wider air gap is the group boundary; no divider, so the sidebar keeps its
+   quiet surface. */
 .group + .group {
-  margin-top: 4px;
+  margin-top: 12px;
 }
 
 /* Instance header and workspace row share the official 32px project-row
@@ -59,9 +68,14 @@
 }
 
 .groupHeader {
+  height: 36px;
   gap: var(--dsh-sidebar-label-gap);
   padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
   border: none;
+  /* Keep the shared paint inset the other rows take as a transparent border:
+     it is what makes the 0 / 12 / 24 title ladder land on exact steps and lets
+     the group's hover fill inset like a Workspace row. */
+  border-inline: var(--dsh-sidebar-paint-inset) solid transparent;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -71,6 +85,10 @@
 
 /* The fold half of a workspace row: it fills the row and owns the title, the
    count, and `aria-expanded`. */
+.workspaceRow {
+  position: relative;
+}
+
 .workspaceToggle {
   flex: 1;
   min-width: 0;
@@ -82,6 +100,9 @@
   border: none;
   border-radius: var(--dsw-radius-md);
   padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
+  padding-inline-start: calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--cp-indent-workspace)
+  );
   background: transparent;
   color: inherit;
   font: inherit;
@@ -148,6 +169,7 @@
    supplies activation semantics; only the modifier rule for Enter/Space is
    ours. */
 .sessionRow {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--dsh-sidebar-label-gap);
@@ -162,7 +184,7 @@
   background-clip: padding-box;
   padding: 0 calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset));
   padding-inline-start: calc(
-    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--dsh-workspace-indent)
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--cp-indent-session)
   );
   color: var(--dsw-alias-label-primary);
   font: inherit;
@@ -176,6 +198,12 @@
    control-plane tree and an ordinary dsh read the same. */
 .sessionRowCurrent {
   background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The current Session is the one row that steps back up to primary ink; the
+   rest of the nested levels stay secondary until hovered. */
+.sessionRowCurrent .title {
+  color: var(--dsw-alias-label-primary);
 }
 
 @media (hover: hover) {
@@ -206,11 +234,27 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* Reachability dot at rest, fold chevron on hover (the exact affordance swap
-   the official project row performs between its folder and its arrow), so the
-   status is always readable at a glance and the fold state appears where the
-   pointer is. */
-.state,
+/* The instance's own mark: the leading cell names the level. Reachability lives
+   on the trailing edge (`.status`), so the same 16px cell never carries two
+   meanings. */
+.levelIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Trailing reachability dot: a fact about the host, next to its count. */
+.status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Fold chevron at rest on hover (the exact affordance swap the official project
+   row performs between its folder and its arrow), so the fold state appears
+   where the pointer is. */
 .folder {
   display: inline-flex;
   align-items: center;
@@ -233,7 +277,7 @@
 }
 
 @media (hover: hover) {
-  .groupHeader:hover .state,
+  .groupHeader:hover .levelIcon,
   .workspaceRow:hover .folder {
     display: none;
   }
@@ -245,7 +289,7 @@
 }
 
 /* Keyboard users get the same reveal, because they cannot hover. */
-.groupHeader:focus-visible .state,
+.groupHeader:focus-visible .levelIcon,
 .workspaceToggle:focus-visible .folder {
   display: none;
 }
@@ -266,6 +310,34 @@
   line-height: 20px;
 }
 
+/* The level ladder without a font-size step: the instance title is the only
+   semibold one, and the two nested levels sit on secondary ink until hover or
+   the main view brings them forward. */
+.groupHeader .title {
+  font-weight: 600;
+}
+
+.workspaceToggle .title,
+.sessionRow .title {
+  color: var(--dsw-alias-label-secondary);
+}
+
+@media (hover: hover) {
+  .workspaceRow:hover .title,
+  .sessionRow:hover .title {
+    color: var(--dsw-alias-label-primary);
+  }
+}
+
+/* A running turn is activity, not a level: a 2px rail replaces the old
+   per-row dot, so the leading cell above it stays a level mark. */
+.runningBar {
+  width: 2px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
 /* Instance/workspace session counts sit on the row's trailing edge, the same
    edge the official section header's actions end on. */
 .count {
@@ -284,6 +356,32 @@
   font-size: 10px;
   line-height: 16px;
   font-variant-numeric: tabular-nums;
+}
+
+/* One 1px rail per nesting step, at the parent's leading-cell centre (8px into
+   a 16px cell). Rows are 2px apart, so the rail reads as a dashed guide rather
+   than a hard border, and the low opacity keeps hover fills clean. Decorative:
+   pseudo-elements never enter the accessibility tree. */
+.workspaceRow::before,
+.sessionRow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.workspaceRow::before {
+  left: calc(var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + 8px);
+}
+
+.sessionRow::before {
+  left: calc(
+    var(--dsh-sidebar-row-padding) - var(--dsh-sidebar-paint-inset) + var(--cp-indent-workspace) + 8px
+  );
 }
 
 /* Offline notice: an unreachable instance keeps its 32px row rhythm, shows the
@@ -383,7 +481,7 @@
   border: none;
   border-radius: var(--dsw-radius-sm);
   padding: 0 var(--dsh-sidebar-row-padding) 0 calc(
-    var(--dsh-sidebar-row-padding) + 16px + var(--dsh-sidebar-label-gap) + var(--dsh-workspace-indent)
+    var(--dsh-sidebar-row-padding) + 16px + var(--dsh-sidebar-label-gap) + var(--cp-indent-session)
   );
   background: transparent;
   color: var(--dsw-alias-label-tertiary);

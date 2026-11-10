@@ -10,9 +10,14 @@
  * same rows.
  *
  * Presentation reuses the official Workspace-browser row language instead of a
- * private one: 32px rows, 16px leading cells, the shell's own
- * `--dsh-sidebar-*` geometry, `--dsw-alias-*` design tokens, the official state
- * dots, and the folder/chevron hover swap. The rows are re-built here rather
+ * private one: the shell's own `--dsh-sidebar-*` geometry, `--dsw-alias-*`
+ * design tokens, the official state dots, and the folder/chevron hover swap.
+ * The three levels carry three distinct marks without a font-size step: the
+ * instance header is 36px with a layers icon, a Workspace is 32px with a folder
+ * one step in, and a Session is 32px with no leading mark two steps in (only a
+ * running rail). Reachability moved to the instance row's trailing edge, so the
+ * leading cell always names the level instead of standing in for a state. The
+ * rows are re-built here rather
  * than imported from ui-workspace because ui-workspace's row components take
  * the Workspace browser's own render seats and controllers as props (see the
  * notes on `ProjectRowItem` / `SessionNodeItem` in its `rows/Rows.tsx`), which
@@ -40,8 +45,8 @@ import clsx from 'clsx'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import {
-  IconFolderCloseRegular, IconFolderOpenRegular, IconNewChatOutlineRegular, IconTriangleRightFillRegular,
-  relativeTime, StateDot,
+  IconFolderCloseRegular, IconFolderOpenRegular, IconLayersOutlineRegular, IconNewChatOutlineRegular,
+  IconTriangleRightFillRegular, relativeTime, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -835,6 +840,7 @@ export function InstanceGroups({
             <button
               type="button"
               className={css.groupHeader}
+              data-level="instance"
               aria-expanded={expanded}
               aria-label={group.state === 'unreachable'
                 ? t('instances.groupOffline', { name: group.label, state: stateLabel })
@@ -850,14 +856,19 @@ export function InstanceGroups({
               }}
             >
               <span className={css.slot}>
-                <span className={css.state}>
-                  <StateDot state={reachabilityDot(group.state)} />
+                <span className={css.levelIcon}>
+                  <IconLayersOutlineRegular size={16} />
                 </span>
                 <span className={css.chevron}>
                   <IconTriangleRightFillRegular className={clsx(css.arrow, expanded && css.arrowOpen)} />
                 </span>
               </span>
               <span className={css.title}>{group.label}</span>
+              {/* Reachability is a fact about the host, not the host's level:
+                  it sits on the trailing edge beside the count. */}
+              <span className={css.status}>
+                <StateDot state={reachabilityDot(group.state)} />
+              </span>
               {/* An offline group must not read as "0 sessions": that is what
                   a connected, empty instance looks like. */}
               <span className={css.count}>
@@ -1006,7 +1017,7 @@ function WorkspaceGroup({
           are siblings, so neither nests inside the other and both keep native
           button semantics. `data-workspace-key` stays on the fold button, the
           element that owns `aria-expanded` and performs the disclosed action. */}
-      <div className={css.workspaceRow} data-workspace-row={workspace.key}>
+      <div className={css.workspaceRow} data-level="workspace" data-workspace-row={workspace.key}>
         <button
           type="button"
           className={css.workspaceToggle}
@@ -1093,6 +1104,7 @@ function WorkspaceGroup({
             key={session.key}
             type="button"
             className={clsx(css.sessionRow, selected && css.sessionRowCurrent)}
+            data-level="session"
             data-session-key={session.key}
             // The visible row is a title and a timestamp; the accessible name
             // is the action it performs, so the timestamp is not read as part
@@ -1107,7 +1119,7 @@ function WorkspaceGroup({
             {...getTriggerProps === undefined ? {} : getTriggerProps(menuTarget, { onKeyDown })}
           >
             <span className={css.slot}>
-              <StateDot state={session.running ? 'ongoing' : 'idle'} />
+              {session.running && <span className={css.runningBar} aria-hidden="true" />}
             </span>
             <span className={css.title}>{title}</span>
             <span className={css.time}>{timeLabel(session.updatedAt, now, t)}</span>
