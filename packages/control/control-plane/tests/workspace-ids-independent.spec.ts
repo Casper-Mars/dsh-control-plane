@@ -252,7 +252,9 @@ function manualFollow(): ManualFollow {
  */
 function bareUpstream(follow: (signal: AbortSignal) => AsyncIterable<WorkspaceFollowFrame>): Upstream {
   const root = new Context()
-  const upstream = new Upstream(INSTANCES[0]!, root)
+  // The constructor is private so production always goes through `connect`;
+  // this unit lane builds a bare instance and replaces the mount seams itself.
+  const upstream = Reflect.construct(Upstream, [INSTANCES[0]!, root]) as Upstream
   Reflect.set(upstream, 'mountNamespace', async (): Promise<void> => {})
   Reflect.set(root, 'remote', { workspace: { follow } })
   return upstream
@@ -346,7 +348,9 @@ describe('C. Upstream.awaitWorkspaceIds', () => {
     // The tree is therefore delayed by up to the cap once per connection.
     vi.useFakeTimers()
     const root = new Context()
-    const upstream = new Upstream(INSTANCES[0]!, root)
+    // The constructor is private so production always goes through `connect`;
+    // this unit lane builds a bare instance and replaces the mount seams itself.
+    const upstream = Reflect.construct(Upstream, [INSTANCES[0]!, root]) as Upstream
     Reflect.set(upstream, 'mountNamespace', async (): Promise<void> => {
       throw new Error('gateway/method-unavailable: workspace')
     })

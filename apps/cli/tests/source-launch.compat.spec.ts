@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { execa } from 'execa'
 import { describe, expect, it } from 'vitest'
-import { testProfileResolution } from './profiles/headless/tests/profile-resolution.ts'
+import { testProfileResolution } from './profile-resolution.ts'
 
 /**
  * Keyless source-launch and profile-resolution checks through the production
