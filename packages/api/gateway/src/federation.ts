@@ -117,6 +117,15 @@ const IDENTIFIER_PATHS_BY_ENDPOINT: ReadonlyMap<string, readonly IdentifierPath[
   ['sessionReferenceResolver/candidates', [['agentId']]],
   // Skill catalog wraps the Session identity in a request object.
   ['skills/list', [['request', 'sessionId']]],
+  // Workspace file previews and Office rendering name the Session whose
+  // workspace resolves the path; the generated wire is the flat
+  // `workspaceFileScopeId`, not a `request` wrapper.
+  ['workspaceFiles/changes', [['workspaceFileScopeId']]],
+  ['workspaceFiles/list', [['workspaceFileScopeId']]],
+  ['workspaceFiles/read', [['workspaceFileScopeId']]],
+  ['workspaceFiles/readBytes', [['workspaceFileScopeId']]],
+  ['workspaceFiles/stat', [['workspaceFileScopeId']]],
+  ['officeToPdf/render', [['workspaceFileScopeId']]],
 ])
 
 /**

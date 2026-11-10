@@ -27,6 +27,8 @@ import * as SessionRemote from '@deepseek-ai/dsh-api-session-controller/remote'
 import * as WorkspaceRemote from '@deepseek-ai/dsh-api-workspace-controller/remote'
 import * as CommandsRemote from '@deepseek-ai/dsh-commands/remote'
 import * as SessionReferenceRemote from '@deepseek-ai/dsh-session-reference/remote'
+import * as WorkspaceFilesRemote from '@deepseek-ai/dsh-api-workspace-files/remote'
+import * as OfficeToPdfRemote from '@deepseek-ai/dsh-office-to-pdf/remote'
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry'
 import TypertGatewayService, {
   isFederatedEndpoint,
@@ -58,11 +60,14 @@ const DESCRIPTORS: readonly InvocationDescriptor[] = [
   ...WorkspaceRemote.default.descriptors,
   ...CommandsRemote.default.descriptors,
   ...SessionReferenceRemote.default.descriptors,
+  ...WorkspaceFilesRemote.default.descriptors,
+  ...OfficeToPdfRemote.default.descriptors,
 ]
 
 /** Namespaces whose identifiers the browser qualifies with an instance prefix. */
 const FEDERATED_NAMESPACES = new Set([
   'session', 'workspace', 'commands', 'fileReferences', 'sessionReferenceResolver', 'skills',
+  'workspaceFiles', 'officeToPdf',
 ])
 
 function descriptorOf(endpoint: string): InvocationDescriptor | undefined {
@@ -97,7 +102,8 @@ type IdPath = readonly string[]
 type IdNameTest = (name: string) => boolean
 
 /** Every id the browser qualifies: primary ids, neighbours, address ids, and Agent ids. */
-const ANY_ID: IdNameTest = name => /(?:session|workspace)Id$/i.test(name) || name === 'agentId'
+const ANY_ID: IdNameTest = name =>
+  /(?:session|workspace)Id$/i.test(name) || name === 'agentId' || name === 'workspaceFileScopeId'
 
 function collectIdPaths(
   schema: SchemaNode | undefined,
@@ -228,7 +234,7 @@ function subagentAddress(prefix: string): Record<string, unknown> {
 }
 
 describe('t100637 / descriptor vs identifier tables', () => {
-  it('lists exactly the real endpoints that declare an instance-qualified id (30/30)', () => {
+  it('lists exactly the real endpoints that declare an instance-qualified id (36/36)', () => {
     const table = contractTableFromSource()
     const expected = expectedIdPaths(ANY_ID)
 
@@ -236,7 +242,7 @@ describe('t100637 / descriptor vs identifier tables', () => {
     const missing = [...expected.keys()].filter(endpoint => !table.has(endpoint))
     const stale = [...table.keys()].filter(endpoint => !expected.has(endpoint))
     expect({ missing, stale }).toEqual({ missing: [], stale: [] })
-    expect(table.size, 'declared endpoints').toBe(30)
+    expect(table.size, 'declared endpoints').toBe(36)
     expect(table.size).toBe(expected.size)
 
     for (const [endpoint, paths] of expected) {
@@ -267,9 +273,10 @@ describe('t100637 / descriptor vs identifier tables', () => {
         checked += 1
       }
     }
-    // 30 endpoints; the neighbour and address endpoints declare more than one
-    // path each (26 session paths + 11 workspace paths + 5 agent/skill paths).
-    expect(checked).toBe(42)
+    // 36 endpoints; the neighbour and address endpoints declare more than one
+    // path each (26 session paths + 11 workspace paths + 5 agent/skill paths
+    // + 6 file-preview paths).
+    expect(checked).toBe(48)
   })
 
   it('keeps every real endpoint with no id field local for its well-formed wire args', () => {
@@ -451,8 +458,21 @@ function fakeClient(): FakeClient {
   }
   const fileReferences = { list: unaryMethod('fileReferences/list') }
   const sessionReferenceResolver = { candidates: unaryMethod('sessionReferenceResolver/candidates') }
+  // The document preview names the Session whose workspace resolves the path;
+  // its generated wire is the flat `workspaceFileScopeId`.
+  const workspaceFiles = {
+    read: unaryMethod('workspaceFiles/read'),
+    readBytes: unaryMethod('workspaceFiles/readBytes'),
+    stat: unaryMethod('workspaceFiles/stat'),
+    list: unaryMethod('workspaceFiles/list'),
+    changes: streamMethod('workspaceFiles/changes'),
+  }
+  const officeToPdf = { render: unaryMethod('officeToPdf/render') }
   return {
-    remote: { session, workspace, commands, fileReferences, sessionReferenceResolver },
+    remote: {
+      session, workspace, commands, fileReferences, sessionReferenceResolver,
+      workspaceFiles, officeToPdf,
+    },
     unary,
     streams,
     errors,
@@ -636,6 +656,50 @@ describe('t100637 / real Gateway → ControlPlane → relay → fake Client', ()
       model: 'm-1',
     })
     expect(alpha.unary[2]?.args[0]).toEqual({ workspaceId: '/repo', title: 'Workspace' })
+  })
+
+  it('forwards workspace file previews with the flat Session scope stripped', async () => {
+    const alpha = fakeClient()
+    const { gateway, peer } = await bench(connectionFactory(new Map([['alpha', alpha], ['beta', fakeClient()]])))
+
+    const read = await gateway.invoke({
+      peer,
+      namespace: 'workspaceFiles',
+      method: 'read',
+      args: { workspaceFileScopeId: 'alpha:s-1', path: 'docs/readme.md', range: { offset: 0, limit: 40 } },
+    })
+    // The generated Client takes the lookup identity as its first positional
+    // argument, so the fake sees the stripped Session id there.
+    expect(read).toEqual({ endpoint: 'workspaceFiles/read', received: 's-1' })
+    expect(alpha.unary[0]?.args[0]).toBe('s-1')
+    expect(alpha.unary[0]?.args[1]).toBe('docs/readme.md')
+    expect(alpha.unary[0]?.args[2]).toEqual({ offset: 0, limit: 40 })
+    await gateway.invoke({
+      peer,
+      namespace: 'officeToPdf',
+      method: 'render',
+      args: { workspaceFileScopeId: 'alpha:s-1', path: 'docs/report.docx', priority: 'foreground' },
+    })
+    expect(alpha.unary.map(call => call.endpoint)).toEqual(['workspaceFiles/read', 'officeToPdf/render'])
+    expect(alpha.unary[1]?.args.slice(0, 3)).toEqual(['s-1', 'docs/report.docx', 'foreground'])
+  })
+
+  it('forwards the workspace file change feed as a stream', async () => {
+    const alpha = fakeClient()
+    const { gateway, peer } = await bench(connectionFactory(new Map([['alpha', alpha], ['beta', fakeClient()]])))
+    const stream = await gateway.stream({
+      peer,
+      namespace: 'workspaceFiles',
+      method: 'changes',
+      args: { workspaceFileScopeId: 'alpha:s-1', path: 'docs/readme.md' },
+    })
+    const iterator = stream[Symbol.asyncIterator]()
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { endpoint: 'workspaceFiles/changes', received: 's-1' },
+    })
+    expect(alpha.streams[0]?.args[0]).toBe('s-1')
+    await iterator.return?.(undefined)
   })
 
   it('forwards Agent-scoped catalogs with the projected agentId', async () => {

@@ -4,9 +4,10 @@
  * Each instance gets its own Cordis root: the control plane's own host-side
  * services stay untouched, and one instance going away cannot dispose another.
  * The connection is the same client carrier a browser page uses, built for
- * Node (see `socket`/`rpc` seams below). The `session`, `commands`, and
- * `sessionReferenceResolver` namespaces are mounted at connect; `workspace` is
- * mounted on the first federated call that needs it.
+ * Node (see `socket`/`rpc` seams below). The `session`, `commands`,
+ * `sessionReferenceResolver`, `workspaceFiles`, and `officeToPdf` namespaces
+ * are mounted at connect; `workspace` is mounted on the first federated call
+ * that needs it.
  * @module @deepseek-ai/dsh-control-plane/src/upstream
  */
 
@@ -204,13 +205,18 @@ export class Upstream {
     // 实例仍要求 launch token 时先换一张 index cookie；免 token 后这段自然失效
     const cookie = transport.fetch === undefined ? await exchangeToken(instance) : undefined
     try {
-      const [connection, gateway, registry, session, commands, sessionReference] = await Promise.all([
+      const [
+        connection, gateway, registry, session, commands, sessionReference,
+        workspaceFiles, officeToPdf,
+      ] = await Promise.all([
         load<ConnectionClientModule>('@deepseek-ai/dsh-client-connection/client'),
         load<GatewayClientModule>('@deepseek-ai/dsh-api-gateway/client'),
         load<RegistryModule>('@deepseek-ai/dsh-typert-registry'),
         load<RemoteContributionModule>('@deepseek-ai/dsh-api-session-controller/remote'),
         load<RemoteContributionModule>('@deepseek-ai/dsh-commands/remote'),
         load<RemoteContributionModule>('@deepseek-ai/dsh-session-reference/remote'),
+        load<RemoteContributionModule>('@deepseek-ai/dsh-api-workspace-files/remote'),
+        load<RemoteContributionModule>('@deepseek-ai/dsh-office-to-pdf/remote'),
       ])
       connection.installConnection(root, {
         // 控制面不参与人工审批/提问；events 开启时才加入转发事件的生命周期
@@ -241,9 +247,12 @@ export class Upstream {
       }).remote
       // The composer's catalogs speak three namespaces: session (history and
       // file references), commands (the `/` catalog), and session references
-      // (the `@` session rows). Mount all three so a federated call can name
-      // any of their descriptors.
-      for (const contribution of [session, commands, sessionReference]) {
+      // (the `@` session rows). The document preview adds workspaceFiles
+      // (bounded reads, listing, watch) and officeToPdf (Office rendering).
+      // Mount all five so a federated call can name any of their descriptors.
+      for (const contribution of [
+        session, commands, sessionReference, workspaceFiles, officeToPdf,
+      ]) {
         upstream.mounted.push(await remote.$mount(contribution.default))
         upstream.remember(contribution.default)
       }
