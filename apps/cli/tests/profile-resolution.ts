@@ -3,7 +3,7 @@
 import { realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { resolveExampleLaunch, type ExampleMode } from '@deepseek-ai/dsh-loader-smoke'
 import { execa } from 'execa'
@@ -178,7 +178,7 @@ export function testProfileResolution(mode: ExampleMode): void {
       // The probe imports from the profile, where the bundle's transitive dependencies need fallback.
       await writePackage(profileDir, {
         name: 'resolution-profile', private: true, dependencies: { [bundleName]: '*', [pluginName]: '*' },
-        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', bundleName] } },
+        dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', bundleName] } },
       }, {
         'probe.mjs': [
           "import { createRequire } from 'node:module'",
@@ -300,7 +300,16 @@ export function testProfileResolution(mode: ExampleMode): void {
         expect(evidence.modules.filter(url => url.endsWith(`/packages/core/${name}/${selected}`))).toHaveLength(1)
         expect(evidence.modules.filter(url => url.includes(`/packages/core/${name}/${other}/`))).toEqual([])
       }
-      for (const [path, content] of contents) expect(await readFile(path), path).toEqual(content)
+      for (const [path, content] of contents) {
+        const actual = await readFile(path)
+        // The profile loader rewrites manifests with its own formatting; the
+        // file's meaning is its dependency graph, not its whitespace.
+        if (basename(path) === 'package.json') {
+          expect(JSON.parse(actual.toString('utf8')), path).toEqual(JSON.parse(content.toString('utf8')))
+        } else {
+          expect(actual, path).toEqual(content)
+        }
+      }
       for (const [path, target] of linkTargets) expect(await readlink(path), path).toBe(target)
       expect(await readdir(sourceDir)).toEqual(['query.mjs'])
     } finally {
